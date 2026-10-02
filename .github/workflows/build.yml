@@ -1,0 +1,118 @@
+name: build-tools
+
+# 触发：
+#   - 推送源码到 main（改动 cbs/ 或 sandbox-sdk-go/）
+#   - 每天 UTC 03:00（北京时间 11:00）检查上游依赖是否有新版本
+#   - 手动
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- 1) 检查上游依赖是否有更新 ----------
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.up.outputs.changed }}
+      cube: ${{ steps.up.outputs.cube }}
+      ai: ${{ steps.up.outputs.ai }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: up
+        run: |
+          set -e
+          # 上游 1：CubeSandbox 平台（cbs 依赖其 Go SDK）
+          CUBE=$(git ls-remote --tags --refs https://github.com/TencentCloud/CubeSandbox.git \
+                 | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
+          # 上游 2：agent-infra sandbox Go SDK（sandbox-sdk-go 依赖）
+          AI=$(curl -fsSL --max-time 30 \
+                 https://proxy.golang.org/github.com/agent-infra/sandbox-sdk-go/@latest \
+                 | sed -n 's/.*"Version":"\([^"]*\)".*/\1/p' || true)
+          PREV_CUBE=$(sed -n 's/.*"cube":[[:space:]]*"\([^"]*\)".*/\1/p' upstream.json 2>/dev/null || true)
+          PREV_AI=$(sed -n 's/.*"ai":[[:space:]]*"\([^"]*\)".*/\1/p' upstream.json 2>/dev/null || true)
+          echo "上游: cube=$CUBE ai=$AI ；上次构建: cube=$PREV_CUBE ai=$PREV_AI"
+          echo "cube=$CUBE" >> "$GITHUB_OUTPUT"
+          echo "ai=$AI"     >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "schedule" ] \
+             && [ -n "$CUBE" ] && [ "$CUBE" = "$PREV_CUBE" ] \
+             && [ -n "$AI" ]   && [ "$AI" = "$PREV_AI" ]; then
+            echo "上游无变化，跳过构建"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------- 2) 交叉编译静态二进制（两个工具 × 两种架构）----------
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [cubesandbox-sdk-go, sandbox-sdk-go]
+        goarch: [arm64, amd64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: build ${{ matrix.tool }} / ${{ matrix.goarch }}
+        run: |
+          set -e
+          cd ${{ matrix.tool }}
+          go mod tidy
+          out=/tmp/${{ matrix.tool }}-linux-${{ matrix.goarch }}
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" -o "$out" .
+          ls -l "$out"
+          file "$out" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.tool }}-linux-${{ matrix.goarch }}
+          path: /tmp/${{ matrix.tool }}-linux-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  # ---------- 3) 汇总 + 发布滚动 Release（tag: latest）----------
+  release:
+    needs: [check, build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: |
+          cd dist && sha256sum cbs-linux-* sandbox-sdk-go-linux-* | tee SHA256SUMS && ls -l
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "toolchain latest"
+          body: |
+            cube=${{ needs.check.outputs.cube }}
+            ai=${{ needs.check.outputs.ai }}
+            built_at=${{ github.run_id }}
+          files: dist/*
+          make_latest: true
+
+      - name: record upstream versions
+        run: |
+          set -e
+          echo "{\"cube\":\"${{ needs.check.outputs.cube }}\",\"ai\":\"${{ needs.check.outputs.ai }}\",\"built_at\":\"$(date -u +%FT%TZ)\"}" > upstream.json
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add upstream.json
+          git diff --cached --quiet || git commit -m "chore: record upstream (${{ needs.check.outputs.cube }} / ${{ needs.check.outputs.ai }})"
+          git push || true
