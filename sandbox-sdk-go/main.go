@@ -362,8 +362,12 @@ func cmdVersion(c *client.Client, args []string) {
 	if os.Getenv("SANDBOX_KEY") != "" {
 		key = "已设置"
 	}
+	base := strings.TrimSuffix(os.Getenv("SANDBOX_BASE"), "/")
+	if base == "" {
+		base = "未设置（形如 https://<cubesandbox-proxy-host>/sandbox/<SID>/8080）"
+	}
 	fmt.Printf("sandbox-sdk-go %s (%s/%s, static)\nSANDBOX_BASE=%s\nSANDBOX_KEY=%s\n",
-		version, runtime.GOOS, runtime.GOARCH, baseURL(), key)
+		version, runtime.GOOS, runtime.GOARCH, base, key)
 }
 
 func cmdHealth(c *client.Client, args []string) {
