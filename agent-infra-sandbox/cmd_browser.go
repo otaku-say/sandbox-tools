@@ -356,7 +356,8 @@ func browserAction(c *client.Client, flags map[string]string, pos []string) {
 	if kind == "" {
 		fatal("%s", usage)
 	}
-	req := &sandboxsdkgo.Action{ActionType: kind}
+	// 注意：SDK 联合体的判别值是大写常量（MOVE_TO / CLICK / DOUBLE_CLICK ...），不是小写
+	req := &sandboxsdkgo.Action{ActionType: strings.ToUpper(kind)}
 	switch kind {
 	case "move_to":
 		req.MoveTo = &sandboxsdkgo.MoveToAction{X: browserNeedFloat(flags, "x", usage), Y: browserNeedFloat(flags, "y", usage)}
