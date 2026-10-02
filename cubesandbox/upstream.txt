@@ -1,0 +1,16 @@
+upstream_repo=TencentCloud/CubeSandbox
+go_sdk=github.com/tencentcloud/CubeSandbox/sdk/go@v0.0.0-20260930061754-e02976ae5472
+python_sdk=cubesandbox (PyPI) 0.7.0
+node_sdk=@cubesandbox/sdk 0.3.0 —— npm 上未发布，需从 sdk/node 源码构建
+compared_at=2026-10-03
+
+# 三语言能力差异（核对结论）
+# - Go SDK 缺 Template.get_build_logs → 本 CLI 用 REST 补足（命令 tpl-logs）
+# - Template.update：Python 注释明确“CubeAPI 不支持”，不实现
+# - Filesystem.watch_dir：Go 的 Watcher 类型未公开文档化，暂缓
+# - 其余（生命周期 / 执行 / PTY / 文件 / 快照 / 克隆 / 卷 / 网络策略 / 模板查询）三语言齐平
+
+# 上游有更新时的核对流程：
+#   1) ./check-parity.sh > /tmp/cube-api.txt     # 拉三语言最新方法清单
+#   2) 与本地 cmd_*.go 的命令对照，补缺口
+#   3) ./build.sh 本地验证，或 Actions → build-tools → Run workflow → tool=cubesandbox

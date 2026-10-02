@@ -10,6 +10,12 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+    inputs:
+      tool:
+        description: "只构建哪个工具（默认 all；单工具构建不会动另一个的产物）"
+        type: choice
+        options: [all, cubesandbox, agent-infra-sandbox]
+        default: all
 
 permissions:
   contents: write
@@ -57,27 +63,43 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tool: [cubesandbox-sdk-go, sandbox-sdk-go]
-        goarch: [arm64, amd64]
+        include:
+          - { dir: cubesandbox,         out: cubesandbox-sdk-go, goarch: arm64 }
+          - { dir: cubesandbox,         out: cubesandbox-sdk-go, goarch: amd64 }
+          - { dir: agent-infra-sandbox, out: sandbox-sdk-go,     goarch: arm64 }
+          - { dir: agent-infra-sandbox, out: sandbox-sdk-go,     goarch: amd64 }
     steps:
+      - id: sel
+        run: |
+          T="${{ github.event.inputs.tool }}"
+          if [ -z "$T" ] || [ "$T" = "all" ] || [ "$T" = "${{ matrix.dir }}" ]; then
+            echo "go=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=0" >> "$GITHUB_OUTPUT"
+            echo "跳过 ${{ matrix.dir }}（本次只构建 $T）"
+          fi
       - uses: actions/checkout@v4
+        if: steps.sel.outputs.go == '1'
       - uses: actions/setup-go@v5
+        if: steps.sel.outputs.go == '1'
         with:
           go-version: "1.22"
-      - name: build ${{ matrix.tool }} / ${{ matrix.goarch }}
+      - name: build ${{ matrix.out }} / ${{ matrix.goarch }}
+        if: steps.sel.outputs.go == '1'
         run: |
           set -e
-          cd ${{ matrix.tool }}
+          cd ${{ matrix.dir }}
           go mod tidy
-          out=/tmp/${{ matrix.tool }}-linux-${{ matrix.goarch }}
+          out=/tmp/${{ matrix.out }}-linux-${{ matrix.goarch }}
           CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
             go build -trimpath -ldflags="-s -w" -o "$out" .
           ls -l "$out"
           file "$out" || true
       - uses: actions/upload-artifact@v4
+        if: steps.sel.outputs.go == '1'
         with:
-          name: ${{ matrix.tool }}-linux-${{ matrix.goarch }}
-          path: /tmp/${{ matrix.tool }}-linux-${{ matrix.goarch }}
+          name: ${{ matrix.out }}-linux-${{ matrix.goarch }}
+          path: /tmp/${{ matrix.out }}-linux-${{ matrix.goarch }}
           if-no-files-found: error
 
   # ---------- 3) 汇总 + 发布滚动 Release（tag: latest）----------
@@ -93,7 +115,7 @@ jobs:
           merge-multiple: true
       - name: checksums
         run: |
-          cd dist && sha256sum cbs-linux-* sandbox-sdk-go-linux-* | tee SHA256SUMS && ls -l
+          cd dist && sha256sum *-linux-* | tee SHA256SUMS && ls -l
 
       - name: publish release
         uses: softprops/action-gh-release@v2

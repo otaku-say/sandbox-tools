@@ -65,6 +65,42 @@ sandbox-sdk-go write /tmp/a.txt ./a.txt ; sandbox-sdk-go get /tmp/out.tgz ./out.
 sandbox-sdk-go sessnew work /home/gem ; sandbox-sdk-go sess work "cd /etc && pwd"
 ```
 
+## 目录结构
+
+```
+cubesandbox/           封装上游 TencentCloud/CubeSandbox 的 Go SDK → 产物 cubesandbox-sdk-go
+  main.go              入口 / 参数解析 / CF 路径改写传输层
+  cmd_*.go             各能力域命令实现
+  build.sh             本地构建（GOARCH 可覆盖）
+  check-parity.sh      拉上游三语言 SDK 方法清单，核对覆盖度
+  upstream.txt         对照的上游版本 + 差异结论 + 核对流程
+agent-infra-sandbox/   封装上游 agent-infra/sandbox 的 Go SDK → 产物 sandbox-sdk-go
+  （同上结构）
+scripts/               与具体 SDK 无关的通用脚本（如 gosdk-update.py）
+.github/workflows/     CI：构建 + 发布 + 上游版本跟踪
+```
+
+## 上游更新了怎么办
+
+1. **看差异**：`cd cubesandbox && ./check-parity.sh`（或 agent-infra-sandbox 同名脚本）
+   —— 拉取上游 Python / Node / JS / Go SDK 的最新方法清单，与本目录已实现的命令对照
+2. **补实现**：按 `upstream.txt` 里记录的差异结论补 `cmd_*.go`
+3. **只构建这一支**：
+   - 本地：`./build.sh`（或 `GOARCH=amd64 ./build.sh`）
+   - CI：Actions → **build-tools** → *Run workflow* → `tool` 选 `cubesandbox` 或 `agent-infra-sandbox`
+     （单工具构建只重发该工具的资产，不动另一个）
+4. 每天 UTC 03:00 的定时任务会自动检查上游版本；有变化才重建（记录写入 `upstream.json`）
+
+## 本地更新
+
+`scripts/gosdk-update.py`（安装到 `/usr/local/bin/gosdk-update`）：
+
+```bash
+gosdk-update check     # 看有没有新构建
+gosdk-update update    # 下载 + SHA256 校验 + 安装
+gosdk-update auto      # 有更新才装
+```
+
 ## 自动构建
 
 `.github/workflows/build.yml`：

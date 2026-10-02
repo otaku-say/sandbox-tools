@@ -1,0 +1,18 @@
+upstream_repo=agent-infra/sandbox
+go_sdk=github.com/agent-infra/sandbox-sdk-go@v0.0.5
+python_sdk=agent_sandbox (PyPI: agent-sandbox) —— 命名空间与 Go 版同源（Fern 生成的 OpenAPI）
+js_sdk=@agent-infra/sandbox (npm)
+compared_at=2026-10-03
+
+# Go SDK 命名空间（CLI 需覆盖的能力面）
+#   bash / shell / file / code / jupyter / nodejs
+#   browser (+ browser_page / browser_tabs / browser_state / browser_cookies / browser_network / browser_captcha)
+#   mcp / skills / sandbox(hooks) / display / proxy / util
+#
+# 当前 CLI 覆盖：bash(exec/run/job)、shell(sess*)、file(write/read/get) —— 其余待补齐
+# 差集以 API-REFERENCE.md（三方差集对照）为准
+
+# 上游有更新时的核对流程：
+#   1) ./check-parity.sh > /tmp/ai-api.txt       # 拉三语言命名空间/方法清单
+#   2) 对照 API-REFERENCE.md 与本地实现，补缺口
+#   3) ./build.sh 或 Actions → build-tools → Run workflow → tool=agent-infra-sandbox
