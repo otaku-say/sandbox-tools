@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -169,9 +170,49 @@ func printJSON(v any) {
 // ---------- 命令实现 ----------
 
 // exec 同步执行：仅用于 <60s 的命令；>60s 会被网关掐断（空输出 + ~64s）。
+// parseKVEnv 解析 --env=K=V,K2=V2 形式为 SDK 需要的 map[string]*string。
+func parseKVEnv(s string) map[string]*string {
+	if s == "" {
+		return nil
+	}
+	out := map[string]*string{}
+	for _, kv := range strings.Split(s, ",") {
+		if i := strings.Index(kv, "="); i > 0 {
+			v := kv[i+1:]
+			out[kv[:i]] = &v
+		}
+	}
+	return out
+}
+
+// cmdExec 支持 exec [--env=K=V,K2=V2] [--hard-timeout=秒] "<cmd>"。
+// 环境变量只注入这一次调用，不落盘、不出现在其他进程里。
 func cmdExec(c *client.Client, args []string) {
+	rest := args[2:]
+	var envs map[string]*string
+	var hard *float64
+	var parts []string
+	for _, a := range rest {
+		switch {
+		case strings.HasPrefix(a, "--env="):
+			envs = parseKVEnv(strings.TrimPrefix(a, "--env="))
+			continue
+		case strings.HasPrefix(a, "--hard-timeout="):
+			if f, err := strconv.ParseFloat(strings.TrimPrefix(a, "--hard-timeout="), 64); err == nil {
+				hard = &f
+			}
+			continue
+		}
+		parts = append(parts, a)
+	}
+	cmd := strings.Join(parts, " ")
+	if cmd == "" {
+		fatal("用法: sandbox-sdk-go exec [--env=K=V,K2=V2] \"<cmd>\"")
+	}
 	resp, err := c.Bash.Exec(ctx, &sdk.BashExecRequest{
-		Command: arg(args, 2, "用法: sandbox-sdk-go exec \"<cmd>\""),
+		Command:     cmd,
+		Env:         envs,
+		HardTimeout: hard,
 	})
 	check(err)
 	fmt.Print(str(resp.Data.Stdout))
@@ -390,7 +431,9 @@ func usageWith(code int) {
 覆盖 agent-infra/sandbox 的全部 20 个命名空间 / 132 个方法
 
 【基础命令】
-  sandbox-sdk-go exec  "<cmd>"                同步执行（<60s）
+  sandbox-sdk-go exec  [--env=K=V,K2=V2] "<cmd>"  同步执行（<60s）
+      注意：--env 走 SDK 的 env 字段，实测本部署的 AIO 不消费它；
+            传密钥请用"文件 + source"或"持久会话 export"（见技能文档）
   sandbox-sdk-go run   "<cmd>" [hard秒]        长任务：async 派发 + 增量轮询
   sandbox-sdk-go sess  <id> "<cmd>"           持久会话执行（cwd/env 跨调用保持）
   sandbox-sdk-go sessnew <id> [dir]           建持久会话
