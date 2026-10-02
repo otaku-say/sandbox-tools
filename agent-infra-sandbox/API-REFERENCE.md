@@ -3,7 +3,7 @@
 > 用途：为编写 Go CLI 封装提供精确方法签名与类型字段（避免编译错误），并给出 Go / Python / JS 三个 SDK 的命名空间与方法级差集。
 >
 > 盘点来源（只读源码，未构建、未创建沙箱）：
-> - **Go SDK**：`github.com/agent-infra/sandbox-sdk-go`，分支 **`master`**（⚠️ 仓库**没有 `main` 分支**，默认分支即 `master`；另有 `skills`、`1.7.5` 分支，三者的 sandbox 客户端都不含 observe_* 方法），commit `105ef16155073b0cb2c3bd2008530d35e9e7b0d4`（2026-03-31）。
+> - **Go SDK**：`github.com/agent-infra/sandbox-sdk-go`，分支 **`master`**（⚠️ 仓库**没有 `main` 分支**，默认分支即 `master`；另有 `skills`、`1.7.5` 分支，三者的 sandbox 客户端都不含 observe_* 方法），commit `105ef16155073b0cb2c3bd2008530d35e9e7b0d4`（2026-03-31）= tag **`v0.0.5`**（已核对：本地 CLI 项目 `go.mod` 固定的 `v0.0.5` 与该 commit 完全相同，故本文档对 v0.0.5 直接适用，无差异）。
 > - **Python SDK**：`github.com/agent-infra/sandbox` → `sdk/python/agent_sandbox/`，commit `7f1afaf8d82bd30531a19caeb1a24dfebbc97d8c`（2026-09-14）。
 > - **JS/TS SDK**：同一仓库 → `sdk/js/src/api/resources/`，同 commit `7f1afaf8`。
 > - 方法提取自各子客户端目录的 `client.go`（`func (c *Client)` 声明）；字段提取自仓库根目录 `<namespace>.go` 的 struct 定义（含 json tag）。全部由脚本自动提取，未手工省略。
@@ -178,6 +178,7 @@ if err != nil {
 > Validation Error
 定义于 `errors.go`。
 - `Body` `*HttpValidationError`
+- （另内嵌 `*core.APIError`，经它提供 `StatusCode` / `Header` / `Body` 等；`Unwrap()` 返回该 APIError）
 
 ### 3.1 `sandbox` — `client.Sandbox`
 
@@ -2345,12 +2346,12 @@ if err != nil {
 | `nodejs` | `client.Nodejs` | `Sandbox.nodejs` | `client.nodejs` | 7/7/7 | — |
 | `mcp` | `client.Mcp` | `Sandbox.mcp` | `client.mcp` | 3/3/3 | — |
 | `browser` | `client.Browser` | `Sandbox.browser` | `client.browser` | 6/6/6 | — |
-| `browserpage` | `client.BrowserPage` | `Sandbox.browser_page` | `client.browser_page` | 29/29/29 | — |
-| `browsertabs` | `client.BrowserTabs` | `Sandbox.browser_tabs` | `client.browser_tabs` | 4/4/4 | — |
-| `browsercookies` | `client.BrowserCookies` | `Sandbox.browser_cookies` | `client.browser_cookies` | 3/3/3 | — |
-| `browserstate` | `client.BrowserState` | `Sandbox.browser_state` | `client.browser_state` | 2/2/2 | — |
-| `browsernetwork` | `client.BrowserNetwork` | `Sandbox.browser_network` | `client.browser_network` | 6/6/6 | — |
-| `browsercaptcha` | `client.BrowserCaptcha` | `Sandbox.browser_captcha` | `client.browser_captcha` | 2/2/2 | — |
+| `browserpage` | `client.BrowserPage` | `Sandbox.browser_page` | `client.browserPage` | 29/29/29 | — |
+| `browsertabs` | `client.BrowserTabs` | `Sandbox.browser_tabs` | `client.browserTabs` | 4/4/4 | — |
+| `browsercookies` | `client.BrowserCookies` | `Sandbox.browser_cookies` | `client.browserCookies` | 3/3/3 | — |
+| `browserstate` | `client.BrowserState` | `Sandbox.browser_state` | `client.browserState` | 2/2/2 | — |
+| `browsernetwork` | `client.BrowserNetwork` | `Sandbox.browser_network` | `client.browserNetwork` | 6/6/6 | — |
+| `browsercaptcha` | `client.BrowserCaptcha` | `Sandbox.browser_captcha` | `client.browserCaptcha` | 2/2/2 | — |
 | `code` | `client.Code` | `Sandbox.code` | `client.code` | 2/2/2 | — |
 | `util` | `client.Util` | `Sandbox.util` | `client.util` | 1/1/1 | — |
 | `skills` | `client.Skills` | `Sandbox.skills` | `client.skills` | 5/5/5 | — |
@@ -2476,4 +2477,5 @@ if err != nil {
 2. **主仓库 `sdk/go` 目录**只是个 README，指向独立仓库 `agent-infra/sandbox-sdk-go`（即本文档第 1–3 章对象），因此 Go 版本以独立仓库为准。
 3. **枚举**（如 `Language`、`Command`、`Button`、`Mode`、`Status`、`BashCommandStatus` 等 17 个）在每个命名空间章节内以 `枚举值` 形式列出，并可用 `NewXxxFromString(s)` 解析。
 4. **数量校验**：子客户端 20 个；Go 方法 132 个（含 `auth` 2 个）；类型 266 个（244 struct + 17 枚举/简单类型 + 5 接口）；字段 904 个。Python/JS 各 140 个方法（=132+8）。
-5. 版本活性：Go SDK 最后提交 2026-03-31（`105ef161`），Python/JS SDK 最后提交 2026-09-14（`7f1afaf8`）——Go SDK 落后约半年，这是 `observe_*` 缺失的最可能原因。
+5. 版本活性：Go SDK 最后提交 2026-03-31（`105ef161` = tag `v0.0.5`），Python/JS SDK 最后提交 2026-09-14（`7f1afaf8`）——Go SDK 落后约半年，这是 `observe_*` 缺失的最可能原因。
+6. **本目录 `check-parity.sh` 的小坑**：其 `GOREPO` 使用 `.../sandbox-sdk-go/main`，但该仓库**不存在 `main` 分支**（默认 `master`），配合 `curl -f` 会让「Go SDK 子客户端方法」整段静默为空；建议改为 `.../sandbox-sdk-go/master`（或固定 tag `v0.0.5`）。另其 `NS` 列表遗漏了 `auth`、`util`、`proxy`、`display`，可一并补上。

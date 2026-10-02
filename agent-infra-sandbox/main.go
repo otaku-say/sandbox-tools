@@ -34,7 +34,7 @@ const (
 	jobDir      = "/home/gem/jobs"
 	httpTimeout = 180 * time.Second
 	// version 与发布资产同步维护：https://github.com/otaku-say/sandbox-tools
-	version = "3.0.0"
+	version = "4.0.0"
 )
 
 var (
@@ -386,8 +386,10 @@ func usage() {
 }
 
 func usageWith(code int) {
-	fmt.Fprint(os.Stderr, `sandbox-sdk-go — CubeSandbox 沙箱客户端（Go SDK，aarch64 静态二进制）
+	fmt.Fprint(os.Stderr, `sandbox-sdk-go — CubeSandbox 沙箱客户端（Go SDK，静态二进制）
+覆盖 agent-infra/sandbox 的全部 20 个命名空间 / 132 个方法
 
+【基础命令】
   sandbox-sdk-go exec  "<cmd>"                同步执行（<60s）
   sandbox-sdk-go run   "<cmd>" [hard秒]        长任务：async 派发 + 增量轮询
   sandbox-sdk-go sess  <id> "<cmd>"           持久会话执行（cwd/env 跨调用保持）
@@ -400,9 +402,28 @@ func usageWith(code int) {
   sandbox-sdk-go read  <远端路径>              读远端文件到 stdout
   sandbox-sdk-go write <远端路径> <本地文件>    本地 → 远端
   sandbox-sdk-go get   <远端路径> <本地文件>    远端 → 本地
-  sandbox-sdk-go ps                           进程列表
-  sandbox-sdk-go health                       体检（主机/时间/负载/内存/磁盘）
-  sandbox-sdk-go version                      版本与连接配置
+  sandbox-sdk-go ps / health / version        进程 / 体检 / 版本
+
+【命名空间命令】sandbox-sdk-go <命名空间> <动作> [参数...]（不带动作时打印该空间用法）
+  file     list read write replace search find grep glob upload download str-replace watch-list watch-create watch-events watch-poll watch-wait watch-stop
+  code     run info
+  jupyter  run info ls new rm rm-all
+  nodejs   run info ls new get rm update
+  util     markdown
+  browser  info config restart screenshot action pac
+  page     navigate back forward reload click fill type press hotkey hover select check uncheck upload fill-form scroll scroll-to scroll-to-element screenshot get-html get-text get-markdown elements console export-console evaluate find-text wait record
+  tabs     ls new close activate
+  cookies  ls set clear
+  state    save load
+  net      headers scoped-headers route-add route-rm requests har
+  captcha  detect wait
+  mcp      servers tools call
+  skills   ls content register rm clear
+  hooks    ls add rm
+  proxy    ls add rm excludes exclude-add exclude-rm upstream upstream-set upstream-rm health diagnose
+  display  record
+  auth     ticket verify
+  ctxinfo  context py-packages node-packages hooks
 `)
 	os.Exit(code)
 }
@@ -420,6 +441,11 @@ func main() {
 		os.Exit(0)
 	}
 	c := newClient()
+	// 命名空间式命令：sandbox-sdk-go <命名空间> <动作> [参数...]（见 dispatch.go）
+	if fn, ok := namespaces[os.Args[1]]; ok {
+		fn(c, os.Args[2:])
+		return
+	}
 	switch os.Args[1] {
 	case "exec":
 		cmdExec(c, os.Args)

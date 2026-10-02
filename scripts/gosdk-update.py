@@ -72,7 +72,7 @@ def check(verbose=True):
     except Exception as e:
         print(f"检查失败: {e}")
         return None
-    pub = rel.get("published_at") or ""
+    pub = rel.get("updated_at") or rel.get("published_at") or ""
     tag = rel.get("tag_name", "latest")
     assets = {a["name"]: a for a in rel.get("assets", [])}
     if not assets:
@@ -101,7 +101,7 @@ def update():
     if not rel:
         return 0
     a = arch()
-    pub = rel.get("published_at") or ""
+    pub = rel.get("updated_at") or rel.get("published_at") or ""
     tmp = tempfile.mkdtemp(prefix="gosdk-")
     sums = {}
     try:

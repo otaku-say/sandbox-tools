@@ -6,10 +6,10 @@
 #
 #   ./check-parity.sh > /tmp/ai-api.txt
 set -euo pipefail
-GOREPO=${GOREPO:-https://raw.githubusercontent.com/agent-infra/sandbox-sdk-go/main}
+GOREPO=${GOREPO:-https://raw.githubusercontent.com/agent-infra/sandbox-sdk-go/master}
 PYBASE=${PYBASE:-https://raw.githubusercontent.com/agent-infra/sandbox/main/sdk/python/agent_sandbox}
 JSBASE=${JSBASE:-https://raw.githubusercontent.com/agent-infra/sandbox/main/sdk/js/src/api/resources}
-NS=${NS:-bash shell file code jupyter nodejs browser browser_page browser_tabs browser_state browser_cookies browser_network browser_captcha mcp skills sandbox}
+NS=${NS:-bash shell file code jupyter nodejs browser browser_page browser_tabs browser_state browser_cookies browser_network browser_captcha mcp skills sandbox proxy display util auth}
 
 hr() { printf '\n%s\n' "===== $1 ====="; }
 
