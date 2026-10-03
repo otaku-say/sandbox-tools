@@ -38,6 +38,18 @@ type tplView struct {
 	Ports      string   `json:"exposedPorts,omitempty"`
 }
 
+// firstLine 取文本首行并截断（错误信息用）。
+func firstLine(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		s = s[:i]
+	}
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
+}
+
 // rawControl 直调控制面 API（读取 SDK 未暴露的字段）。
 func rawControl(path string) ([]byte, error) {
 	api := envPick(defAPIURL, "CUBESANDBOX_API_URL", "CUBE_API_URL")
@@ -313,9 +325,15 @@ func cmdTplLs2(args []string) {
 // cmdTplPick 打印动态选择的模板（调试/脚本用）。
 func cmdTplPick(args []string) {
 	flags, _, _ := splitArgs(args)
-	t, err := pickTemplate()
+	var t *tplView
+	var err error
+	if needs := flags["need"]; needs != "" {
+		t, err = selectByNeed(parseNeeds(needs))
+	} else {
+		t, err = pickTemplate()
+	}
 	if err != nil {
-		fatal("自动选择模板失败：%v", err)
+		fatal("选择模板失败：%v", err)
 	}
 	if flags["json"] == "true" {
 		printJSON(t)

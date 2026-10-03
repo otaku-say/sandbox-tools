@@ -14,8 +14,21 @@ import (
 func cmdNew(c *cubesandbox.Client, args []string) {
 	flags, _, _ := splitArgs(args)
 	opts := cubesandbox.CreateOptions{}
-	// 模板解析优先级：--template（ID 或别名/镜像子串）→ CUBESANDBOX_TEMPLATE_ID → 动态选择
-	opts.TemplateID = resolveTemplateID(flags["template"])
+	// 模板解析优先级：
+	//   ① --template=<ID|别名|镜像子串>   ② --need=<能力列表>（能力覆盖 + 资源最小）
+	//   ③ CUBESANDBOX_TEMPLATE_ID        ④ 缺省动态挑选（内存最小者）
+	if v := flags["template"]; v != "" {
+		opts.TemplateID = resolveTemplateID(v)
+	} else if needs := flags["need"]; needs != "" {
+		t, err := selectByNeed(parseNeeds(needs))
+		if err != nil {
+			fatal("按能力选择模板失败：%v", err)
+		}
+		opts.TemplateID = t.TemplateID
+		fmt.Fprintf(os.Stderr, "[template] --need=%s → %s（%dm/%dMi）\n", needs, t.TemplateID, t.CPU, t.MemMB)
+	} else {
+		opts.TemplateID = resolveTemplateID("")
+	}
 	if d := durPtr(flags, "timeout"); d != nil {
 		opts.Timeout = d
 	}
