@@ -285,7 +285,8 @@ func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 //
 //	tpl-caps [<模板ID>] [--probe] [--json]
 func cmdTplCaps(c *cubesandbox.Client, args []string) {
-	flags, tid, _ := splitArgs(args)
+	flags, tid, rest := splitArgs(args)
+	foldFlags(flags, rest)
 	list, err := listTemplates()
 	if err != nil {
 		fatal("列出模板失败: %v", err)

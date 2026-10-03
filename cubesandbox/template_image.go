@@ -368,9 +368,9 @@ func parsePortList(s string) []int {
 // ---------- 命令入口 ----------
 
 func cmdTplFromImage(args []string) {
-	flags, pos, _ := splitArgs(args)
-	need(len(pos) > 0, "用法: tpl-from-image <镜像引用> [--alias=] [--cpu=] [--memory=] [--writable=] [--env=K=V,...] [--json|--curl|--create]")
-	ref := pos[0]
+	flags, ref, rest := splitArgs(args)
+	foldFlags(flags, rest) // 允许 flag 写在镜像引用之后
+	need(ref != "", "用法: tpl-from-image <镜像引用> [--alias=] [--cpu=] [--memory=] [--writable=] [--env=K=V,...] [--json|--curl|--create]")
 	user, pass := flags["registry-user"], flags["registry-pass"]
 
 	cfg, err := fetchImageConfig(ref, flags["platform"], user, pass)

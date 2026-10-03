@@ -35,7 +35,7 @@ const (
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
 	defTemplate  = ""
-	version      = "2.6.0"
+	version      = "2.6.1"
 )
 
 var (
@@ -148,6 +148,22 @@ func splitArgs(args []string) (flags map[string]string, sid string, rest []strin
 		}
 	}
 	return
+}
+
+// foldFlags 把"位置参数之后"的 --k / --k=v 折回 flags 表
+//（splitArgs 遇到第一个位置参数就停止解析 flag，这里补齐）。
+func foldFlags(flags map[string]string, rest []string) {
+	for _, a := range rest {
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		if eq := strings.Index(name, "="); eq >= 0 {
+			flags[name[:eq]] = name[eq+1:]
+		} else {
+			flags[name] = "true"
+		}
+	}
 }
 
 // splitFlagsFrom 解析**任意位置**的已知 flag（--k=v 或 --k v），其余按原样保留。
