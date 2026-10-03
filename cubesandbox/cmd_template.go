@@ -11,13 +11,13 @@ import (
 
 // cmdTplLogs —— 官方 Go SDK 尚未提供模板构建日志，这里按 Python SDK 的等价端点直调：
 //
-//	GET {CUBE_API_URL}/templates/{templateID}/builds/{buildID}/logs
+//	GET {CUBESANDBOX_API_URL}/templates/{templateID}/builds/{buildID}/logs
 //
 // 控制面请求走公开域名，无需 CF 路径改写。
 func cmdTplLogs(c interface{}, args []string) {
 	_, tid, rest := splitArgs(args)
 	need(tid != "" && len(rest) >= 1, "用法: tpl-logs <模板ID> <buildID>")
-	api := envOr("CUBE_API_URL", defAPIURL)
+	api := envPick(defAPIURL, "CUBESANDBOX_API_URL", "CUBE_API_URL")
 	url := strings.TrimSuffix(api, "/") + "/templates/" + tid + "/builds/" + rest[0] + "/logs"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

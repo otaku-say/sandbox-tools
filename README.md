@@ -50,8 +50,9 @@ cubesandbox-sdk-go rm $SID
 cubesandbox-sdk-go health
 ```
 
-环境变量：`CUBE_API_URL`（**必填**，控制面地址，例 `https://<cubesandbox-api-host>`）、`CUBE_API_KEY`（部署密钥）、
-`CUBE_TEMPLATE_ID`（可选，默认模板）、`CBS_PROXY_BASE`（**必填**，数据面网关，例 `https://<cubesandbox-proxy-host>`）。
+环境变量：`CUBESANDBOX_API_URL`（**必填**，控制面地址，例 `https://<cubesandbox-api-host>`）、`CUBESANDBOX_API_KEY`（部署密钥）、
+`CUBESANDBOX_TEMPLATE_ID`（可选，默认模板）、`CUBESANDBOX_PROXY_URL`（**必填**，数据面网关，例 `https://<cubesandbox-proxy-host>`）。
+（旧的 `CUBE_API_URL` / `CBS_PROXY_BASE` / `CUBE_API_KEY` / `CUBE_TEMPLATE_ID` 仍兼容，新名优先。）
 
 ### sandbox-sdk-go（沙箱内操作）
 

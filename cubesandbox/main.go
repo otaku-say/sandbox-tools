@@ -29,8 +29,8 @@ import (
 
 const (
 	// 部署相关地址一律从环境变量读取——仓库内不写死任何私有域名：
-	//   CUBE_API_URL   控制面地址（例：https://<cubesandbox-api-host>）
-	//   CBS_PROXY_BASE 数据面网关地址（例：https://<cubesandbox-proxy-host>）
+	//   CUBESANDBOX_API_URL    控制面地址（例：https://<cubesandbox-api-host>）
+	//   CUBESANDBOX_PROXY_URL  数据面网关地址（例：https://<cubesandbox-proxy-host>）
 	defAPIURL    = ""
 	defProxyBase = ""
 	defTemplate  = "tpl-59f34c49abc04d66a7002b84"
@@ -73,22 +73,32 @@ func envOr(k, def string) string {
 	return def
 }
 
+// envPick 依次尝试多个环境变量名（新名在前、旧名兼容），返回第一个非空值；都没有时返回 def。
+func envPick(def string, names ...string) string {
+	for _, n := range names {
+		if v := strings.TrimSpace(os.Getenv(n)); v != "" {
+			return v
+		}
+	}
+	return def
+}
+
 func newClient() *cubesandbox.Client {
-	proxyBase := envOr("CBS_PROXY_BASE", defProxyBase)
+	proxyBase := envPick(defProxyBase, "CUBESANDBOX_PROXY_URL", "CBS_PROXY_BASE")
 	if proxyBase == "" {
-		fatal("缺少 CBS_PROXY_BASE：请设置数据面网关地址（例 https://<cubesandbox-proxy-host>）")
+		fatal("缺少 CUBESANDBOX_PROXY_URL：请设置数据面网关地址（例 https://<cubesandbox-proxy-host>）")
 	}
 	pu, err := url.Parse(proxyBase)
 	if err != nil {
-		fatal("CBS_PROXY_BASE 非法: %v", err)
+		fatal("CUBESANDBOX_PROXY_URL 非法: %v", err)
 	}
 	cfg := cubesandbox.NewConfigFromEnv()
-	cfg.APIURL = envOr("CUBE_API_URL", defAPIURL)
+	cfg.APIURL = envPick(defAPIURL, "CUBESANDBOX_API_URL", "CUBE_API_URL")
 	if cfg.APIURL == "" {
-		fatal("缺少 CUBE_API_URL：请设置控制面地址（例 https://<cubesandbox-api-host>）")
+		fatal("缺少 CUBESANDBOX_API_URL：请设置控制面地址（例 https://<cubesandbox-api-host>）")
 	}
-	cfg.APIKey = os.Getenv("CUBE_API_KEY")
-	cfg.TemplateID = envOr("CUBE_TEMPLATE_ID", defTemplate)
+	cfg.APIKey = envPick("", "CUBESANDBOX_API_KEY", "CUBE_API_KEY")
+	cfg.TemplateID = envPick(defTemplate, "CUBESANDBOX_TEMPLATE_ID", "CUBE_TEMPLATE_ID")
 	hc := &http.Client{Transport: &cfTransport{base: http.DefaultTransport, proxyBase: pu}}
 	return cubesandbox.NewClient(cfg, cubesandbox.WithHTTPClient(hc))
 }
@@ -222,8 +232,8 @@ func main() {
 		return
 	}
 	if cmd == "version" || cmd == "-v" || cmd == "--version" {
-		fmt.Printf("cubesandbox-sdk-go %s\nCUBE_API_URL=%s\nCBS_PROXY_BASE=%s\n",
-			version, envOr("CUBE_API_URL", defAPIURL), envOr("CBS_PROXY_BASE", defProxyBase))
+		fmt.Printf("cubesandbox-sdk-go %s\nCUBESANDBOX_API_URL=%s\nCUBESANDBOX_PROXY_URL=%s\n",
+			version, envPick(defAPIURL, "CUBESANDBOX_API_URL", "CUBE_API_URL"), envPick(defProxyBase, "CUBESANDBOX_PROXY_URL", "CBS_PROXY_BASE"))
 		return
 	}
 	// 不依赖网络的命令先行处理
@@ -345,6 +355,7 @@ func usage() {
   envpush NAME [NAME2 ...]              登记要从本地注入沙箱的变量（exec 自动带上）
   tpl-ls | tpl-info <模板ID> | tpl-logs <模板ID> <buildID> | health | version | help
 
-环境变量：CUBE_API_URL、CUBE_API_KEY、CUBE_TEMPLATE_ID、CBS_PROXY_BASE
+环境变量：CUBESANDBOX_API_URL、CUBESANDBOX_API_KEY、CUBESANDBOX_TEMPLATE_ID、CUBESANDBOX_PROXY_URL
+（旧名 CUBE_API_URL / CBS_PROXY_BASE / CUBE_API_KEY / CUBE_TEMPLATE_ID 仍兼容）
 `)
 }
