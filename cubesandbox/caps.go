@@ -190,7 +190,12 @@ func selectByNeed(needs []string) (*tplView, error) {
 	return &cands[0], nil
 }
 
-// probeCaps 真机探测：建临时沙箱 → 读 /v1/capabilities → 销毁。
+// probeCaps 真机探测：建临时沙箱 → **直接打真实端点**判断能力 → 销毁。
+//
+//   browser：GET /v2/browser/screenshot == 200（浏览器可用；manual 模式下未启动则为 503）
+//   desktop：GET /v2/computer/info == 200（computer-use worker 可用）
+//            503 且 message 含 "not available" → 明确没有（提前结束等待）
+//   最长等待 120s（浏览器/worker 都是延迟启动），一旦两项都确定就立刻返回。
 func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 	d := 300 * time.Second
 	opts := cubesandbox.CreateOptions{TemplateID: t.TemplateID, Timeout: &d}
@@ -203,45 +208,66 @@ func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 			fmt.Fprintf(os.Stderr, "[caps] 警告：探测沙箱 %s 销毁失败，请手动 rm：%v\n", sb.SandboxID, err)
 		}
 	}()
-	co := cubesandbox.CommandOptions{Timeout: 120 * time.Second}
-	// 等网关（镜像内 8080）就绪
-	ready := false
+	co := cubesandbox.CommandOptions{Timeout: 60 * time.Second}
+
+	// 先等网关（镜像内 8080）
+	gateway := false
 	for i := 0; i < 90; i++ {
 		res, err := sb.Commands().Run(ctx, `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/v1/capabilities`, co)
 		if err == nil && strings.TrimSpace(res.Stdout) == "200" {
-			ready = true
+			gateway = true
 			break
 		}
 		time.Sleep(2 * time.Second)
 	}
-	if !ready {
+	if !gateway {
 		return nil, fmt.Errorf("沙箱 %s 网关 180s 内未就绪", sb.SandboxID)
 	}
-	res, err := sb.Commands().Run(ctx, "curl -s http://127.0.0.1:8080/v1/capabilities", co)
-	if err != nil {
-		return nil, fmt.Errorf("读取能力失败: %w", err)
+
+	// probe 一次端点：返回 (http 码, 响应正文)
+	probe := func(path string) (string, string) {
+		res, err := sb.Commands().Run(ctx, fmt.Sprintf(`curl -s -w "\n%%{http_code}" http://127.0.0.1:8080%s`, path), co)
+		if err != nil {
+			return "", ""
+		}
+		out := strings.TrimSpace(res.Stdout)
+		i := strings.LastIndex(out, "\n")
+		if i < 0 {
+			return out, ""
+		}
+		return strings.TrimSpace(out[i+1:]), out[:i]
 	}
-	var env struct {
-		Data struct {
-			Browser struct {
-				Status string `json:"status"`
-			} `json:"browser"`
-			Computer struct {
-				Status string `json:"status"`
-			} `json:"computer"`
-		} `json:"data"`
+
+	browser, desktop := false, false
+	desktopAbsent := false
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		if !browser {
+			if code, _ := probe("/v2/browser/screenshot"); code == "200" {
+				browser = true
+			}
+		}
+		if !desktop && !desktopAbsent {
+			code, body := probe("/v2/computer/info")
+			switch {
+			case code == "200":
+				desktop = true
+			case code == "503" && strings.Contains(body, "not available"):
+				desktopAbsent = true // 明确没有 worker，无需再等
+			}
+		}
+		if (browser && (desktop || desktopAbsent)) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Second)
 	}
-	if err := json.Unmarshal([]byte(res.Stdout), &env); err != nil {
-		return nil, fmt.Errorf("解析能力响应失败: %w（原始：%.120s）", err, res.Stdout)
-	}
+
 	caps := []string{capShell, capFile, capCode}
-	if strings.EqualFold(env.Data.Browser.Status, "ready") {
+	if browser {
 		caps = append(caps, capBrowser)
 	}
-	if strings.EqualFold(env.Data.Computer.Status, "ready") || strings.EqualFold(env.Data.Computer.Status, "absent") {
-		if strings.EqualFold(env.Data.Computer.Status, "ready") {
-			caps = append(caps, capDesktop)
-		}
+	if desktop {
+		caps = append(caps, capDesktop)
 	}
 	return caps, nil
 }
