@@ -126,7 +126,8 @@ func parseNeeds(s string) []string {
 	return out
 }
 
-// rankLess 资源优先序：内存小 → CPU 小 → 创建新（未知规格排最后）。
+// rankLess 资源优先序：内存小 → CPU 小 → 多余能力少 → 创建新（未知规格排最后）。
+// 「多余能力少」让 --need=browser 时优先选非桌面镜像（同等资源下更薄）。
 func rankLess(a, b tplView) bool {
 	am, bm := a.MemMB, b.MemMB
 	if am == 0 {
@@ -148,6 +149,9 @@ func rankLess(a, b tplView) bool {
 	if ac != bc {
 		return ac < bc
 	}
+	if len(a.caps) != len(b.caps) {
+		return len(a.caps) < len(b.caps)
+	}
 	return a.CreatedAt > b.CreatedAt
 }
 
@@ -164,11 +168,12 @@ func selectByNeed(needs []string) (*tplView, error) {
 		}
 		caps, _ := capsOf(t)
 		if covers(caps, needs) {
+			v := t
 			if d, err := templateDetail(t.TemplateID); err == nil {
-				cands = append(cands, *d)
-			} else {
-				cands = append(cands, t)
+				v = *d
 			}
+			v.caps = caps // 供排序用（已知能力数）
+			cands = append(cands, v)
 		}
 	}
 	if len(cands) == 0 {

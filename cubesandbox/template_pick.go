@@ -36,6 +36,8 @@ type tplView struct {
 	MemMB      int      `json:"memMiB,omitempty"`    // MiB；0=未知
 	WritableGB string   `json:"writableLayer,omitempty"`
 	Ports      string   `json:"exposedPorts,omitempty"`
+
+	caps []string `json:"-"` // 已知能力（选择器内部使用，不序列化）
 }
 
 // firstLine 取文本首行并截断（错误信息用）。

@@ -35,7 +35,7 @@ const (
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
 	defTemplate  = ""
-	version      = "2.5.0"
+	version      = "2.5.1"
 )
 
 var (
@@ -99,10 +99,8 @@ func newClient() *cubesandbox.Client {
 		fatal("缺少 CUBESANDBOX_API_URL：请设置控制面地址（例 https://<cubesandbox-api-host>）")
 	}
 	cfg.APIKey = envPick("", "CUBESANDBOX_API_KEY", "CUBE_API_KEY")
+	// 模板 ID 不再强制：new 会按 --template / --need / 动态挑选解析出具体 ID。
 	cfg.TemplateID = envPick(defTemplate, "CUBESANDBOX_TEMPLATE_ID", "CUBE_TEMPLATE_ID")
-	if strings.TrimSpace(cfg.TemplateID) == "" {
-		fatal("缺少 CUBESANDBOX_TEMPLATE_ID：请设置模板 ID（例 tpl-<id>；用 GET /templates 查询）")
-	}
 	hc := &http.Client{Transport: &cfTransport{base: http.DefaultTransport, proxyBase: pu}}
 	return cubesandbox.NewClient(cfg, cubesandbox.WithHTTPClient(hc))
 }
