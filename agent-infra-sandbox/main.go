@@ -170,6 +170,18 @@ func printJSON(v any) {
 // ---------- 命令实现 ----------
 
 // exec 同步执行：仅用于 <60s 的命令；>60s 会被网关掐断（空输出 + ~64s）。
+
+// withEnv 在命令前自动加载 envpush 推送的变量文件（若沙箱内存在）。
+// 背景：沙箱里的 bash 是非登录、非交互的，不读 .bashrc/.bash_profile，
+// 所以"自动带上已推送的变量"这件事由工具侧保证。
+// 可用 SANDBOX_NO_ENVPUSH=1 关闭该包装（调试用）。
+func withEnv(cmd string) string {
+	if os.Getenv("SANDBOX_NO_ENVPUSH") != "" {
+		return cmd
+	}
+	return fmt.Sprintf("[ -f %s ] && . %s; %s", envAutoPath, envAutoPath, cmd)
+}
+
 // parseKVEnv 解析 --env=K=V,K2=V2 形式为 SDK 需要的 map[string]*string。
 func parseKVEnv(s string) map[string]*string {
 	if s == "" {
@@ -210,7 +222,7 @@ func cmdExec(c *client.Client, args []string) {
 		fatal("用法: sandbox-sdk-go exec [--env=K=V,K2=V2] \"<cmd>\"")
 	}
 	resp, err := c.Bash.Exec(ctx, &sdk.BashExecRequest{
-		Command:     cmd,
+		Command:     withEnv(cmd),
 		Env:         envs,
 		HardTimeout: hard,
 	})
@@ -227,7 +239,7 @@ func cmdRun(c *client.Client, args []string) {
 		fmt.Sscanf(args[3], "%f", &hard)
 	}
 	resp, err := c.Bash.Exec(ctx, &sdk.BashExecRequest{
-		Command: cmd, AsyncMode: ptrBool(true), HardTimeout: ptrFloat(hard),
+		Command: withEnv(cmd), AsyncMode: ptrBool(true), HardTimeout: ptrFloat(hard),
 	})
 	check(err)
 	session := resp.Data.SessionId
@@ -267,7 +279,7 @@ func cmdRun(c *client.Client, args []string) {
 func cmdSess(c *client.Client, args []string) {
 	id := arg(args, 2, "用法: sandbox-sdk-go sess <id> \"<cmd>\"")
 	cmd := arg(args, 3, "用法: sandbox-sdk-go sess <id> \"<cmd>\"")
-	resp, err := c.Shell.ExecCommand(ctx, &sdk.ShellExecRequest{Id: ptrStr(id), Command: cmd})
+	resp, err := c.Shell.ExecCommand(ctx, &sdk.ShellExecRequest{Id: ptrStr(id), Command: withEnv(cmd)})
 	check(err)
 	fmt.Print(str(resp.Data.Output))
 	os.Exit(num(resp.Data.ExitCode))
@@ -333,7 +345,7 @@ func cmdJob(c *client.Client, args []string) {
 	}
 	log := fmt.Sprintf("%s/%s.log", jobDir, id)
 	launch := fmt.Sprintf("mkdir -p %s && nohup bash -c %s >%s 2>&1 & echo \"pid=$! log=%s\"",
-		jobDir, shellQuote(cmd), log, log)
+		jobDir, shellQuote(withEnv(cmd)), log, log)
 	resp, err := c.Shell.ExecCommand(ctx, &sdk.ShellExecRequest{Id: ptrStr(id), Command: launch})
 	check(err)
 	fmt.Print(str(resp.Data.Output))
@@ -490,6 +502,8 @@ func main() {
 		return
 	}
 	switch os.Args[1] {
+	case "envpush":
+		cmdEnvPush(c, os.Args)
 	case "exec":
 		cmdExec(c, os.Args)
 	case "run":
