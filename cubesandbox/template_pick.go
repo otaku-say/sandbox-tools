@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // tplView 是模板的一行视图（列表 + 详情合并后的关键字段）。
@@ -324,5 +323,4 @@ func cmdTplPick(args []string) {
 	}
 	fmt.Println(t.TemplateID)
 	fmt.Fprintf(os.Stderr, "%s\n", t.display())
-	_ = time.Now() // 保留 time 导入（后续如需按时间过滤）
 }
