@@ -23,7 +23,7 @@ func cmdTplLogs(c interface{}, args []string) {
 	if err != nil {
 		fatal("构造请求失败: %v", err)
 	}
-	if k := os.Getenv("CUBE_API_KEY"); k != "" {
+	if k := envPick("", "CUBESANDBOX_API_KEY", "CUBE_API_KEY"); k != "" {
 		req.Header.Set("X-API-Key", k)
 	}
 	resp, err := http.DefaultClient.Do(req)

@@ -125,21 +125,6 @@ func cmdVolRm(c *cubesandbox.Client, args []string) {
 
 // ---------------- 模板 / 健康 ----------------
 
-func cmdTplLs(c *cubesandbox.Client, args []string) {
-	flags, _, _ := splitArgs(args)
-	list, err := c.ListTemplates(ctx)
-	if err != nil {
-		fatal("列出模板失败: %v", err)
-	}
-	if flags["json"] == "true" {
-		printJSON(list)
-		return
-	}
-	for _, t := range list {
-		fmt.Printf("%-34s %-8s %s\n", t.TemplateID, t.Status, t.ImageInfo)
-	}
-}
-
 func cmdTplInfo(c *cubesandbox.Client, args []string) {
 	_, tid, _ := splitArgs(args)
 	need(tid != "", "用法: tpl-info <模板ID>")

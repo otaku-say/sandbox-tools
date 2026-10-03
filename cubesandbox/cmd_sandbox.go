@@ -14,9 +14,8 @@ import (
 func cmdNew(c *cubesandbox.Client, args []string) {
 	flags, _, _ := splitArgs(args)
 	opts := cubesandbox.CreateOptions{}
-	if v := flags["template"]; v != "" {
-		opts.TemplateID = v
-	}
+	// 模板解析优先级：--template（ID 或别名/镜像子串）→ CUBESANDBOX_TEMPLATE_ID → 动态选择
+	opts.TemplateID = resolveTemplateID(flags["template"])
 	if d := durPtr(flags, "timeout"); d != nil {
 		opts.Timeout = d
 	}

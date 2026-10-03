@@ -35,7 +35,7 @@ const (
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
 	defTemplate  = ""
-	version      = "2.3.0"
+	version      = "2.4.0"
 )
 
 var (
@@ -312,7 +312,9 @@ func main() {
 		cmdVolRm(c, args)
 	// 模板 / 健康
 	case "tpl-ls":
-		cmdTplLs(c, args)
+		cmdTplLs2(args)
+	case "tpl-pick":
+		cmdTplPick(args)
 	case "tpl-info":
 		cmdTplInfo(c, args)
 	case "tpl-logs":
@@ -330,7 +332,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `cubesandbox-sdk-go `+version+` —— CubeSandbox 全功能遥控 CLI
 
 【沙箱生命周期】
-  new [--timeout=秒] [--note=名称] [--template=ID] [--env=K=V,...] [--vol=名字:路径[:ro],...] [--no-internet]
+  new [--timeout=秒] [--note=名称] [--template=ID|别名|镜像子串] [--env=K=V,...] [--vol=名字:路径[:ro],...] [--no-internet]
+      # 不传 --template 时：CUBESANDBOX_TEMPLATE_ID → 动态选择（见 tpl-pick）
   ls | info <sid> | rm <sid>
   pause <sid> [--wait] | resume <sid> [--timeout=秒] | timeout <sid> <秒>
   net <sid> [--no-internet] [--allow=域1,域2] [--deny=域1,域2]
@@ -357,7 +360,17 @@ func usage() {
 
 【其它】
   envpush NAME [NAME2 ...]              登记要从本地注入沙箱的变量（exec 自动带上）
-  tpl-ls | tpl-info <模板ID> | tpl-logs <模板ID> <buildID> | health | version | help
+  tpl-ls [--json]                       列出模板（ID/别名/状态/CPU/内存/可写层/镜像）
+  tpl-pick [--json]                     打印动态选择结果（不建沙箱）
+  tpl-info <模板ID> | tpl-logs <模板ID> <buildID>
+  health | version | help
+
+【模板动态选择】（不写死模板 ID）
+  优先级：--template= → CUBESANDBOX_TEMPLATE_ID → 自动挑选
+  自动挑选规则：
+    ① CUBESANDBOX_TEMPLATE_PICK=子串1,子串2   按序匹配 别名/镜像/ID（命中即选）
+    ② CUBESANDBOX_TEMPLATE_MIN_CPU=毫核、CUBESANDBOX_TEMPLATE_MIN_MEM=MiB   规格下限过滤
+    ③ 都没配：READY 里内存最小者（同则最新创建）
 
 环境变量：CUBESANDBOX_API_URL、CUBESANDBOX_API_KEY、CUBESANDBOX_TEMPLATE_ID、CUBESANDBOX_PROXY_URL
 （旧名 CUBE_API_URL / CBS_PROXY_BASE / CUBE_API_KEY / CUBE_TEMPLATE_ID 仍兼容）
