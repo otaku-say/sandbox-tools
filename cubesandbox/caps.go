@@ -192,10 +192,10 @@ func selectByNeed(needs []string) (*tplView, error) {
 
 // probeCaps 真机探测：建临时沙箱 → **直接打真实端点**判断能力 → 销毁。
 //
-//   browser：GET /v2/browser/screenshot == 200（浏览器可用；manual 模式下未启动则为 503）
-//   desktop：GET /v2/computer/info == 200（computer-use worker 可用）
-//            503 且 message 含 "not available" → 明确没有（提前结束等待）
-//   最长等待 120s（浏览器/worker 都是延迟启动），一旦两项都确定就立刻返回。
+//   browser：GET /v2/browser/screenshot == 200
+//            桌面镜像的 Chromium 是 manual 模式：20s 还没起来就调 /opt/gem/browser-launch.sh（若存在）再等
+//   desktop：GET /v2/computer/info == 200（worker 延迟启动，给足 60s 宽限；不能凭 503 报文提前否定）
+//   探测预算：browser ≤ 150s、desktop ≤ 60s，两项都确定立刻返回。
 func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 	d := 300 * time.Second
 	opts := cubesandbox.CreateOptions{TemplateID: t.TemplateID, Timeout: &d}
@@ -224,7 +224,7 @@ func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 		return nil, fmt.Errorf("沙箱 %s 网关 180s 内未就绪", sb.SandboxID)
 	}
 
-	// probe 一次端点：返回 (http 码, 响应正文)
+	// 打一次端点：返回 (http 码, 响应正文)
 	probe := func(path string) (string, string) {
 		res, err := sb.Commands().Run(ctx, fmt.Sprintf(`curl -s -w "\n%%{http_code}" http://127.0.0.1:8080%s`, path), co)
 		if err != nil {
@@ -238,26 +238,35 @@ func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 		return strings.TrimSpace(out[i+1:]), out[:i]
 	}
 
-	browser, desktop := false, false
-	desktopAbsent := false
-	deadline := time.Now().Add(120 * time.Second)
+	browser, desktop, triedLaunch := false, false, false
+	start := time.Now()
+	deadline := start.Add(150 * time.Second)
 	for {
 		if !browser {
 			if code, _ := probe("/v2/browser/screenshot"); code == "200" {
 				browser = true
+			} else if !triedLaunch && time.Since(start) > 20*time.Second {
+				// 桌面镜像的 Chromium 需手动拉起（BROWSER_START_MODE=manual）
+				triedLaunch = true
+				if res, err := sb.Commands().Run(ctx, "test -x /opt/gem/browser-launch.sh && /opt/gem/browser-launch.sh >/dev/null 2>&1; echo done", co); err == nil && strings.Contains(res.Stdout, "done") {
+					fmt.Fprintf(os.Stderr, "[caps] %s 触发 browser-launch.sh（manual 模式镜像）\n", t.TemplateID)
+				}
 			}
 		}
-		if !desktop && !desktopAbsent {
-			code, body := probe("/v2/computer/info")
-			switch {
-			case code == "200":
+		if !desktop {
+			if code, _ := probe("/v2/computer/info"); code == "200" {
 				desktop = true
-			case code == "503" && strings.Contains(body, "not available"):
-				desktopAbsent = true // 明确没有 worker，无需再等
 			}
 		}
-		if (browser && (desktop || desktopAbsent)) || time.Now().After(deadline) {
+		if (browser && desktop) || time.Now().After(deadline) {
 			break
+		}
+		if !desktop && time.Since(start) > 60*time.Second {
+			// worker 60s 没起：判定无桌面能力（之后循环只剩 browser 分支）
+			desktop = false
+			if browser {
+				break
+			}
 		}
 		time.Sleep(5 * time.Second)
 	}
