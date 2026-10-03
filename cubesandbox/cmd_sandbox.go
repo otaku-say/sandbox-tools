@@ -154,9 +154,10 @@ func cmdExec(c *cubesandbox.Client, args []string) {
 	flags, sid, rest := splitArgs(args)
 	need(len(rest) > 0, "用法: exec <sid> <命令...>")
 	sb := connect(c, sid)
+	// 显式 --env 优先；再叠加 envpush 登记的变量（值从本地环境现取）
 	opts := cubesandbox.CommandOptions{
 		Cwd:     flags["cwd"],
-		Envs:    envMap(flags, "env"),
+		Envs:    mergeEnvs(envMap(flags, "env")),
 		Timeout: dur(flags, "timeout"),
 	}
 	res, err := sb.Commands().Run(ctx, strings.Join(rest, " "), opts)

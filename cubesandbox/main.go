@@ -31,7 +31,7 @@ const (
 	defAPIURL    = "https://<cubesandbox-api-host>"
 	defProxyBase = "https://<cubesandbox-proxy-host>"
 	defTemplate  = "tpl-59f34c49abc04d66a7002b84"
-	version      = "2.1.0"
+	version      = "2.2.0"
 )
 
 var (
@@ -216,6 +216,11 @@ func main() {
 			version, envOr("CUBE_API_URL", defAPIURL), envOr("CBS_PROXY_BASE", defProxyBase))
 		return
 	}
+	// 不依赖网络的命令先行处理
+	if cmd == "envpush" {
+		cmdEnvPush(os.Args)
+		return
+	}
 	c := newClient()
 	switch cmd {
 	// 沙箱
@@ -327,6 +332,7 @@ func usage() {
   vol-ls | vol-new <名字> [--driver=插件] | vol-info <卷ID> | vol-rm <卷ID>
 
 【其它】
+  envpush NAME [NAME2 ...]              登记要从本地注入沙箱的变量（exec 自动带上）
   tpl-ls | tpl-info <模板ID> | tpl-logs <模板ID> <buildID> | health | version | help
 
 环境变量：CUBE_API_URL、CUBE_API_KEY、CUBE_TEMPLATE_ID、CBS_PROXY_BASE
