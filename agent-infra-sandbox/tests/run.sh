@@ -29,7 +29,7 @@ TESTS_DIR="$ROOT/tests"
 CSB=${CUBESANDBOX_CMD:-/usr/local/bin/cubesandbox-sdk-go}
 TEMPLATE=${SANDBOX_TEMPLATE:-auto}
 FALLBACK=${SANDBOX_FALLBACK_TEMPLATE:-tpl-fb13c778ed3741e8aec51d3e}
-API_URL=${CUBESANDBOX_API_URL:-https://<cubesandbox-api-host>}
+API_URL=${CUBESANDBOX_API_URL:?请先 export CUBESANDBOX_API_URL=https://<cubesandbox-api-host>}
 IT_ARGS="$*"
 SID=""
 TMP=$(mktemp -d /tmp/cli_it_run.XXXXXX)

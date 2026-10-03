@@ -50,8 +50,8 @@ cubesandbox-sdk-go rm $SID
 cubesandbox-sdk-go health
 ```
 
-环境变量：`CUBE_API_URL`（默认 `https://<cubesandbox-api-host>`）、`CUBE_API_KEY`、
-`CUBE_TEMPLATE_ID`（默认内置模板）、`CBS_PROXY_BASE`（默认 `https://<cubesandbox-proxy-host>`）。
+环境变量：`CUBE_API_URL`（**必填**，控制面地址，例 `https://<cubesandbox-api-host>`）、`CUBE_API_KEY`（部署密钥）、
+`CUBE_TEMPLATE_ID`（可选，默认模板）、`CBS_PROXY_BASE`（**必填**，数据面网关，例 `https://<cubesandbox-proxy-host>`）。
 
 ### sandbox-sdk-go（沙箱内操作）
 
@@ -59,10 +59,10 @@ cubesandbox-sdk-go health
 export SANDBOX_BASE="https://<cubesandbox-proxy-host>/sandbox/<SID>/8080"
 export SANDBOX_KEY=<可选，网关开启鉴权时填>
 sandbox-sdk-go exec "python3 -V"
-sandbox-sdk-go run "pip install pandas" 600      # 长任务（后台轮询）
-sandbox-sdk-go job build "npm ci && npm run build" ; sandbox-sdk-go log build 100
-sandbox-sdk-go write /tmp/a.txt ./a.txt ; sandbox-sdk-go get /tmp/out.tgz ./out.tgz
-sandbox-sdk-go sessnew work /home/gem ; sandbox-sdk-go sess work "cd /etc && pwd"
+ID=$(sandbox-sdk-go async "pip install pandas")   # 长任务：异步派发
+sandbox-sdk-go log "$ID" --follow                # 跟踪到终态
+sandbox-sdk-go put ./a.txt /tmp/a.txt ; sandbox-sdk-go get /tmp/out.tgz ./out.tgz
+sandbox-sdk-go sess-new work --cwd=/home/gem ; sandbox-sdk-go sess work "pwd"
 ```
 
 ## 目录结构
@@ -74,8 +74,12 @@ cubesandbox/           封装上游 TencentCloud/CubeSandbox 的 Go SDK → 产�
   build.sh             本地构建（GOARCH 可覆盖）
   check-parity.sh      拉上游三语言 SDK 方法清单，核对覆盖度
   upstream.txt         对照的上游版本 + 差异结论 + 核对流程
-agent-infra-sandbox/   封装上游 agent-infra/sandbox 的 Go SDK → 产物 sandbox-sdk-go
-  （同上结构）
+agent-infra-sandbox/   aiod v2 API 遥控 CLI（纯 v2 HTTP，自实现）→ 产物 sandbox-sdk-go
+  main.go              入口 / 命令表（77 条）
+  client.go            v2 HTTP 核心（信封解析 / api / apiRaw / multipart）
+  v2_*.go              各能力域实现（命令/文件/PTY/监听/代码/浏览器/桌面/MCP）
+  tests/               集成套件（cli_it.py 77 用例 + run.sh 一键真机回归）
+  build.sh             双架构构建 + SHA256SUMS
 scripts/               与具体 SDK 无关的通用脚本（如 gosdk-update.py）
 .github/workflows/     CI：构建 + 发布 + 上游版本跟踪
 ```

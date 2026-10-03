@@ -14,7 +14,7 @@ on:
       tool:
         description: "只构建哪个工具（默认 all；单工具构建不会动另一个的产物）"
         type: choice
-        options: [all, cubesandbox, agent-infra-sandbox]
+        options: [all, cubesandbox]
         default: all
 
 permissions:
@@ -37,18 +37,16 @@ jobs:
           # 上游 1：CubeSandbox 平台（cbs 依赖其 Go SDK）
           CUBE=$(git ls-remote --tags --refs https://github.com/TencentCloud/CubeSandbox.git \
                  | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
-          # 上游 2：agent-infra sandbox Go SDK（sandbox-sdk-go 依赖）
-          AI=$(curl -fsSL --max-time 30 \
-                 https://proxy.golang.org/github.com/agent-infra/sandbox-sdk-go/@latest \
-                 | sed -n 's/.*"Version":"\([^"]*\)".*/\1/p' || true)
+          # 说明：sandbox-sdk-go 自 v5 起为纯 v2 HTTP 实现，不再依赖任何上游 SDK，
+          #       其构建/发布由独立工作流 sandbox-sdk-go.yml 负责（本工作流只管 cubesandbox）。
+          AI=""
           PREV_CUBE=$(sed -n 's/.*"cube":[[:space:]]*"\([^"]*\)".*/\1/p' upstream.json 2>/dev/null || true)
           PREV_AI=$(sed -n 's/.*"ai":[[:space:]]*"\([^"]*\)".*/\1/p' upstream.json 2>/dev/null || true)
           echo "上游: cube=$CUBE ai=$AI ；上次构建: cube=$PREV_CUBE ai=$PREV_AI"
           echo "cube=$CUBE" >> "$GITHUB_OUTPUT"
           echo "ai=$AI"     >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "schedule" ] \
-             && [ -n "$CUBE" ] && [ "$CUBE" = "$PREV_CUBE" ] \
-             && [ -n "$AI" ]   && [ "$AI" = "$PREV_AI" ]; then
+             && [ -n "$CUBE" ] && [ "$CUBE" = "$PREV_CUBE" ]; then
             echo "上游无变化，跳过构建"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -66,8 +64,6 @@ jobs:
         include:
           - { dir: cubesandbox,         out: cubesandbox-sdk-go, goarch: arm64 }
           - { dir: cubesandbox,         out: cubesandbox-sdk-go, goarch: amd64 }
-          - { dir: agent-infra-sandbox, out: sandbox-sdk-go,     goarch: arm64 }
-          - { dir: agent-infra-sandbox, out: sandbox-sdk-go,     goarch: amd64 }
     steps:
       - id: sel
         run: |
@@ -113,9 +109,20 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: checksums
+      - name: checksums（合并保留其他工具条目）
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd dist && sha256sum *-linux-* | tee SHA256SUMS && ls -l
+          set -e
+          cd dist
+          sha256sum cubesandbox-sdk-go-linux-* > /tmp/new.SHA256SUMS
+          if gh release download latest --pattern SHA256SUMS --dir /tmp/prev --clobber 2>/dev/null; then
+            grep -vE 'cubesandbox-sdk-go-linux-(arm64|amd64)' /tmp/prev/SHA256SUMS > SHA256SUMS || true
+          else
+            : > SHA256SUMS
+          fi
+          cat /tmp/new.SHA256SUMS >> SHA256SUMS
+          cat SHA256SUMS
 
       - name: publish release
         uses: softprops/action-gh-release@v2
@@ -124,7 +131,6 @@ jobs:
           name: "toolchain latest"
           body: |
             cube=${{ needs.check.outputs.cube }}
-            ai=${{ needs.check.outputs.ai }}
             built_at=${{ github.run_id }}
           files: dist/*
           make_latest: true
@@ -132,9 +138,9 @@ jobs:
       - name: record upstream versions
         run: |
           set -e
-          echo "{\"cube\":\"${{ needs.check.outputs.cube }}\",\"ai\":\"${{ needs.check.outputs.ai }}\",\"built_at\":\"$(date -u +%FT%TZ)\"}" > upstream.json
+          echo "{\"cube\":\"${{ needs.check.outputs.cube }}\",\"built_at\":\"$(date -u +%FT%TZ)\"}" > upstream.json
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add upstream.json
-          git diff --cached --quiet || git commit -m "chore: record upstream (${{ needs.check.outputs.cube }} / ${{ needs.check.outputs.ai }})"
+          git diff --cached --quiet || git commit -m "chore: record upstream (${{ needs.check.outputs.cube }})"
           git push || true

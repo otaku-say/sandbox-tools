@@ -28,8 +28,11 @@ import (
 )
 
 const (
-	defAPIURL    = "https://<cubesandbox-api-host>"
-	defProxyBase = "https://<cubesandbox-proxy-host>"
+	// 部署相关地址一律从环境变量读取——仓库内不写死任何私有域名：
+	//   CUBE_API_URL   控制面地址（例：https://<cubesandbox-api-host>）
+	//   CBS_PROXY_BASE 数据面网关地址（例：https://<cubesandbox-proxy-host>）
+	defAPIURL    = ""
+	defProxyBase = ""
 	defTemplate  = "tpl-59f34c49abc04d66a7002b84"
 	version      = "2.2.0"
 )
@@ -71,12 +74,19 @@ func envOr(k, def string) string {
 }
 
 func newClient() *cubesandbox.Client {
-	pu, err := url.Parse(envOr("CBS_PROXY_BASE", defProxyBase))
+	proxyBase := envOr("CBS_PROXY_BASE", defProxyBase)
+	if proxyBase == "" {
+		fatal("缺少 CBS_PROXY_BASE：请设置数据面网关地址（例 https://<cubesandbox-proxy-host>）")
+	}
+	pu, err := url.Parse(proxyBase)
 	if err != nil {
 		fatal("CBS_PROXY_BASE 非法: %v", err)
 	}
 	cfg := cubesandbox.NewConfigFromEnv()
 	cfg.APIURL = envOr("CUBE_API_URL", defAPIURL)
+	if cfg.APIURL == "" {
+		fatal("缺少 CUBE_API_URL：请设置控制面地址（例 https://<cubesandbox-api-host>）")
+	}
 	cfg.APIKey = os.Getenv("CUBE_API_KEY")
 	cfg.TemplateID = envOr("CUBE_TEMPLATE_ID", defTemplate)
 	hc := &http.Client{Transport: &cfTransport{base: http.DefaultTransport, proxyBase: pu}}
