@@ -6,7 +6,7 @@
 | 工具 | 用途 | 基于 |
 |---|---|---|
 | **`cubesandbox-sdk-go`** | 平台侧遥控：建/查/删沙箱、执行命令、文件传输 | 官方 SDK `github.com/tencentcloud/CubeSandbox/sdk/go` |
-| **`sandbox-sdk-go`** | 沙箱内操作：命令、长任务、持久会话、文件读写 | `github.com/agent-infra/sandbox-sdk-go` |
+| **`sandbox-sdk-go`** | 沙箱内操作：命令、文件、终端、监听、代码、浏览器、**computer-use**（77 条命令） | aiod **v2 HTTP API**（纯 v2，自实现客户端，不依赖上游 SDK） |
 
 ## 下载
 
