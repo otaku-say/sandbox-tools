@@ -51,7 +51,7 @@ cubesandbox-sdk-go health
 ```
 
 环境变量：`CUBESANDBOX_API_URL`（**必填**，控制面地址，例 `https://<cubesandbox-api-host>`）、`CUBESANDBOX_API_KEY`（部署密钥）、
-`CUBESANDBOX_TEMPLATE_ID`（可选，默认模板）、`CUBESANDBOX_PROXY_URL`（**必填**，数据面网关，例 `https://<cubesandbox-proxy-host>`）。
+`CUBESANDBOX_TEMPLATE_ID`（**必填**，模板 ID，例 `tpl-<id>`）、`CUBESANDBOX_PROXY_URL`（**必填**，数据面网关，例 `https://<cubesandbox-proxy-host>`）。
 （旧的 `CUBE_API_URL` / `CBS_PROXY_BASE` / `CUBE_API_KEY` / `CUBE_TEMPLATE_ID` 仍兼容，新名优先。）
 
 ### sandbox-sdk-go（沙箱内操作）
