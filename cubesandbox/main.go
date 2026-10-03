@@ -37,7 +37,7 @@ const (
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
 	defTemplate = ""
-	version     = "2.7.0"
+	version     = "2.8.0"
 )
 
 var (
@@ -281,6 +281,8 @@ func main() {
 	case "net":
 		cmdNetwork(c, args)
 	// 执行
+	case "ports":
+		cmdPorts(c, args)
 	case "exec":
 		cmdExec(c, args)
 	case "code":
@@ -360,6 +362,8 @@ func usage() {
 
 【执行】
   exec <sid> <命令...>          [--cwd=目录] [--env=K=V] [--timeout=秒]
+  ports <sid> [--json]                  实测沙箱**实际监听**的端口（模板声明不一定准；
+                                        只列非 loopback 的才可从外部经路径路由访问）
   code <sid> <代码>             [--lang=python|js|...]
   pty  <sid> [--cmd=/bin/bash]  [--cwd=目录]        # 交互式终端（转发 stdin/stdout）
 

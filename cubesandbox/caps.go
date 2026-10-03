@@ -550,6 +550,7 @@ func printEndpointsHint(sid, templateID string) {
 		}
 		fmt.Fprintf(os.Stderr, "[sandbox] 声明端口 %s\n", strings.Join(parts, " | "))
 	}
+	fmt.Fprintf(os.Stderr, "[sandbox] 提示：模板声明端口未必等于实际监听，用 `ports %s` 实测\n", sid)
 	proxy := strings.TrimSuffix(envPick("", "CUBESANDBOX_PROXY_URL", "CBS_PROXY_BASE"), "/")
 	if proxy == "" || p.GatewayPort <= 0 {
 		return
