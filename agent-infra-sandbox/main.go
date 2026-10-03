@@ -457,6 +457,7 @@ func usageWith(code int) {
   sandbox-sdk-go read  <远端路径>              读远端文件到 stdout
   sandbox-sdk-go write <远端路径> <本地文件>    本地 → 远端
   sandbox-sdk-go get   <远端路径> <本地文件>    远端 → 本地
+  sandbox-sdk-go envpush NAME[=值] ...         把本地环境变量推到沙箱（之后 exec/run/job 自动带上）
   sandbox-sdk-go ps / health / version        进程 / 体检 / 版本
 
 【命名空间命令】sandbox-sdk-go <命名空间> <动作> [参数...]（不带动作时打印该空间用法）
