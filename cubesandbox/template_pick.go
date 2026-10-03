@@ -77,6 +77,32 @@ func rawControl(path string) ([]byte, error) {
 	return body, nil
 }
 
+// rawControlPost 直调控制面 POST。
+func rawControlPost(path string, body []byte) ([]byte, error) {
+	api := envPick(defAPIURL, "CUBESANDBOX_API_URL", "CUBE_API_URL")
+	if api == "" {
+		return nil, fmt.Errorf("缺少 CUBESANDBOX_API_URL")
+	}
+	req, err := http.NewRequest("POST", strings.TrimSuffix(api, "/")+path, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if k := envPick("", "CUBESANDBOX_API_KEY", "CUBE_API_KEY"); k != "" {
+		req.Header.Set("X-API-Key", k)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, firstLine(out))
+	}
+	return out, nil
+}
+
 // listTemplates 拉模板列表（含别名 / 镜像 / 状态 / 创建时间）。
 func listTemplates() ([]tplView, error) {
 	body, err := rawControl("/templates")

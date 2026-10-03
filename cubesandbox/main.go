@@ -35,7 +35,7 @@ const (
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
 	defTemplate  = ""
-	version      = "2.5.3"
+	version      = "2.6.0"
 )
 
 var (
@@ -315,6 +315,8 @@ func main() {
 		cmdTplPick(args)
 	case "tpl-caps":
 		cmdTplCaps(c, args)
+	case "tpl-from-image":
+		cmdTplFromImage(args)
 	case "tpl-info":
 		cmdTplInfo(c, args)
 	case "tpl-logs":
@@ -363,6 +365,9 @@ func usage() {
   tpl-ls [--json]                       列出模板（ID/别名/状态/CPU/内存/可写层/镜像）
   tpl-pick [--need=...] [--json]        打印选择结果（不建沙箱）
   tpl-caps [<模板ID>] [--probe] [--json] 模板能力表（--probe 真机探测并缓存）
+  tpl-from-image <镜像> [--json|--curl|--create] [--alias=] [--cpu=] [--memory=] [--writable=] [--env=K=V,...]
+                                        从镜像自带的标签读取模板默认值（端口/探针/可写层/CPU/内存/别名），
+                                        --create 直接提交平台建模板；--curl 输出可直接执行的 curl
   tpl-info <模板ID> | tpl-logs <模板ID> <buildID>
   health | version | help
 
