@@ -58,6 +58,7 @@ func cmdNew(c *cubesandbox.Client, args []string) {
 		fatal("创建沙箱失败: %v", err)
 	}
 	fmt.Println(sb.SandboxID)
+	printEndpointsHint(sb.SandboxID, opts.TemplateID)
 }
 
 func cmdList(c *cubesandbox.Client, args []string) {

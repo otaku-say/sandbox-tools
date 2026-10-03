@@ -32,12 +32,13 @@ type tplView struct {
 	Status     string   `json:"status,omitempty"`
 	CreatedAt  string   `json:"createdAt,omitempty"`
 	ImageInfo  string   `json:"imageInfo,omitempty"`
-	CPU        int      `json:"cpuMilli,omitempty"`  // 毫核；0=未知
-	MemMB      int      `json:"memMiB,omitempty"`    // MiB；0=未知
+	CPU        int      `json:"cpuMilli,omitempty"` // 毫核；0=未知
+	MemMB      int      `json:"memMiB,omitempty"`   // MiB；0=未知
 	WritableGB string   `json:"writableLayer,omitempty"`
 	Ports      string   `json:"exposedPorts,omitempty"`
 
-	caps []string `json:"-"` // 已知能力（选择器内部使用，不序列化）
+	caps   []string `json:"-"` // 已知能力（选择器内部使用，不序列化）
+	filled bool     `json:"-"` // 详情是否已补齐（端口/CPU/内存）
 }
 
 // firstLine 取文本首行并截断（错误信息用）。
@@ -163,12 +164,12 @@ func templateDetail(id string) (*tplView, error) {
 		return nil, err
 	}
 	var raw struct {
-		TemplateID  string   `json:"templateID"`
-		Status      string   `json:"status"`
-		CreatedAt   string   `json:"createdAt"`
-		ImageInfo   string   `json:"imageInfo"`
-		Aliases     []string `json:"aliases"`
-		Replicas    []struct {
+		TemplateID string   `json:"templateID"`
+		Status     string   `json:"status"`
+		CreatedAt  string   `json:"createdAt"`
+		ImageInfo  string   `json:"imageInfo"`
+		Aliases    []string `json:"aliases"`
+		Replicas   []struct {
 			Spec string `json:"spec"`
 		} `json:"replicas"`
 		CreateRequest struct {
@@ -185,6 +186,7 @@ func templateDetail(id string) (*tplView, error) {
 	if len(raw.Replicas) > 0 {
 		v.CPU, v.MemMB = specFromText(raw.Replicas[0].Spec)
 	}
+	v.filled = true
 	v.WritableGB = raw.CreateRequest.Annotations["cube.master.rootfs.writable_layer_size"]
 	v.Ports = raw.CreateRequest.Annotations["com.exposed_ports"]
 	return v, nil

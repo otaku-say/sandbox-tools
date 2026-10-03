@@ -2,7 +2,9 @@
 //
 // 原理：官方 SDK 的数据面走 e2b 风格虚拟域名 <port>-<sandboxID>.cube.app；
 // 本工具在传输层注入 RoundTripper，把数据面请求改写成 CF 路径式路由：
-//     https://<proxy>/sandbox/<sandboxID>/<port>/<path>
+//
+//	https://<proxy>/sandbox/<sandboxID>/<port>/<path>
+//
 // 控制面请求（CubeAPI 域名）原样透传 —— 不需要改服务端任何配置。
 //
 // 覆盖官方 SDK 的完整能力面：沙箱生命周期、命令/代码执行、PTY 交互、
@@ -34,8 +36,8 @@ const (
 	defAPIURL    = ""
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
-	defTemplate  = ""
-	version      = "2.6.4"
+	defTemplate = ""
+	version     = "2.7.0"
 )
 
 var (
@@ -151,7 +153,7 @@ func splitArgs(args []string) (flags map[string]string, sid string, rest []strin
 }
 
 // foldFlags 把"位置参数之后"的 --k / --k=v 折回 flags 表
-//（splitArgs 遇到第一个位置参数就停止解析 flag，这里补齐）。
+// （splitArgs 遇到第一个位置参数就停止解析 flag，这里补齐）。
 func foldFlags(flags map[string]string, rest []string) {
 	for _, a := range rest {
 		if !strings.HasPrefix(a, "-") {
@@ -380,7 +382,9 @@ func usage() {
   envpush NAME [NAME2 ...]              登记要从本地注入沙箱的变量（exec 自动带上）
   tpl-ls [--json]                       列出模板（ID/别名/状态/CPU/内存/可写层/镜像）
   tpl-pick [--need=...] [--json]        打印选择结果（不建沙箱）
-  tpl-caps [<模板ID>] [--probe] [--json] 模板能力表（--probe 真机探测并缓存）
+  tpl-caps [<模板ID>] [--probe] [--prune] [--json]
+                                       模板画像：能力 + 端口 + AIO 网关端口
+                                       （默认亚秒级：缓存/平台元数据；--probe 才真机验证）
   tpl-from-image <镜像> [--json|--curl|--create] [--alias=] [--cpu=] [--memory=] [--writable=] [--env=K=V,...]
                                         从镜像自带的标签读取模板默认值（端口/探针/可写层/CPU/内存/别名），
                                         --create 直接提交平台建模板；--curl 输出可直接执行的 curl
@@ -394,7 +398,8 @@ func usage() {
     ② CUBESANDBOX_TEMPLATE_MIN_CPU=毫核、CUBESANDBOX_TEMPLATE_MIN_MEM=MiB   规格下限过滤
     ③ --need=shell,file,browser,desktop：能力覆盖需求 且 内存/CPU 最小者（可用 --template 覆盖）
     ④ 都没配：READY 里内存最小者（同则最新创建）
-  能力来源：本地缓存 ~/.cubesandbox-sdk-go/caps.json（tpl-caps --probe 写入）→ 镜像名启发式
+  能力来源：本地画像缓存（带模板指纹：镜像+创建时间，模板重建自动失效）
+            → 平台元数据静态推断（暴露端口 + 镜像名，亚秒级）→ tpl-caps --probe 真机校正（可选）
 
 环境变量：CUBESANDBOX_API_URL、CUBESANDBOX_API_KEY、CUBESANDBOX_TEMPLATE_ID、CUBESANDBOX_PROXY_URL
 （旧名 CUBE_API_URL / CBS_PROXY_BASE / CUBE_API_KEY / CUBE_TEMPLATE_ID 仍兼容）
