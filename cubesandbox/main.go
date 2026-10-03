@@ -35,7 +35,7 @@ const (
 	defProxyBase = ""
 	// 模板 ID 属于部署信息：仓库内不写死（用 CUBESANDBOX_TEMPLATE_ID 指定）
 	defTemplate  = ""
-	version      = "2.6.1"
+	version      = "2.6.2"
 )
 
 var (

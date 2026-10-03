@@ -315,6 +315,13 @@ func defaultsFromImage(ref string, cfg *imgConfigBlob, flags map[string]string) 
 		}
 		sort.Ints(d.ExposedPorts)
 		warnings = append(warnings, "端口取自镜像 EXPOSE（无 io.cubesandbox.template 标签）")
+		// CubeSandbox 惯例：envd 在 49983，健康检查 /health
+		for _, p := range d.ExposedPorts {
+			if p == 49983 && d.ProbePort == 0 {
+				d.ProbePort, d.ProbePath = 49983, "/health"
+				warnings = append(warnings, "探针按惯例取 envd 49983 /health")
+			}
+		}
 	}
 	// ④ 命令行覆盖
 	if v := flags["alias"]; v != "" {
@@ -335,7 +342,8 @@ func defaultsFromImage(ref string, cfg *imgConfigBlob, flags map[string]string) 
 	}
 	d.Env = envPairs(flags, "env")
 	if d.WritableLayerSize == "" {
-		warnings = append(warnings, "镜像未声明可写层大小，平台要求该字段：请用 --writable=12G 指定")
+		d.WritableLayerSize = "12G"
+		warnings = append(warnings, "镜像未声明可写层大小，暂按 12G 估计（可用 --writable= 覆盖）")
 	}
 	return d, warnings, nil
 }
