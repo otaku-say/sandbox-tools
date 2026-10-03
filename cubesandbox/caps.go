@@ -8,7 +8,8 @@ package main
 //
 // 能力来源（优先级从高到低）：
 //   1) 本地缓存 ~/.cubesandbox-sdk-go/caps.json（tpl-caps --probe 真机探测后写入；也可手工维护）
-//   2) 镜像名启发式（仅 AIO 系：aio-computer→含 desktop；aio-*/aiod/all-in-one→含 browser；其余只给基线）
+//   2) 镜像名启发式（**白名单**：aio-computer→+desktop；aio-daemon/aiod/all-in-one→+browser；
+//      其余镜像（含 aio-code 这类无浏览器的轻量镜像）一律只给基线 shell,file,code）
 // 选择规则：在 READY 且**能力覆盖需求**的模板中，取**内存最小 → CPU 最小 → 创建最新**者。
 
 import (
@@ -76,8 +77,10 @@ func heuristicCaps(imageInfo string) []string {
 	switch {
 	case strings.Contains(img, "aio-computer"):
 		caps = append(caps, capBrowser, capDesktop) // 桌面镜像同时带 Chromium
-	case strings.Contains(img, "aio-") || strings.Contains(img, "aiod") || strings.Contains(img, "all-in-one"):
+	case strings.Contains(img, "aio-daemon") || strings.Contains(img, "aiod") || strings.Contains(img, "all-in-one"):
 		caps = append(caps, capBrowser)
+	// 注意：不要用裸前缀 "aio-" 匹配——agent-infra/aio-code 是无浏览器的轻量镜像，
+	// 用白名单避免误判（实测教训：误判会让 --need=browser 选错模板）
 	}
 	return caps
 }
