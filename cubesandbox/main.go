@@ -34,7 +34,7 @@ const (
 	defAPIURL    = ""
 	defProxyBase = ""
 	defTemplate  = "tpl-59f34c49abc04d66a7002b84"
-	version      = "2.2.0"
+	version      = "2.3.0"
 )
 
 var (
