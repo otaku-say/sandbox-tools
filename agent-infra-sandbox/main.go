@@ -1,539 +1,221 @@
-// sandbox-sdk-go — CubeSandbox 沙箱命令行客户端（官方 Go SDK，github.com/agent-infra/sandbox-sdk-go）。
+// main.go —— CLI 入口与命令表（冻结文件，子代理请勿修改）
 //
-// 设计目标：iSH（aarch64）上的标准沙箱控制面。
-//   * 静态二进制，无解释器冷启动（Python SDK 每次调用要烧 ~7s 本机 CPU）
-//   * 长任务走 async 通道：轮询封在进程内，对上层只算一次调用
-//   * 保活走持久会话（平台底层即 tmux），而非 ad-hoc tmux
-//
-// 交叉编译（iSH 无 Go 工具链，在沙箱内构建）：
-//
-//	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o sandbox-sdk-go .
+// 命名与风格约定：
+//   - 需要取值的参数一律写成 --key=value（不支持 --key value，避免歧义）；
+//   - 布尔开关写成 --flag；
+//   - 所有业务输出走 stdout（人类可读或 JSON），错误走 stderr 且退出码非 0。
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"runtime"
-	"strconv"
+	"sort"
 	"strings"
-	"time"
-	"unicode/utf8"
-
-	sdk "github.com/agent-infra/sandbox-sdk-go"
-	"github.com/agent-infra/sandbox-sdk-go/client"
-	"github.com/agent-infra/sandbox-sdk-go/option"
+	"text/tabwriter"
 )
 
-const (
-	defaultDir  = "/home/gem"
-	jobDir      = "/home/gem/jobs"
-	httpTimeout = 180 * time.Second
-	// version 与发布资产同步维护：https://github.com/otaku-say/sandbox-tools
-	version = "4.0.0"
-)
-
-var (
-	ctx          = context.Background()
-	activeClient *http.Client
-)
-
-// ---------- 基础设施 ----------
-
-func newClient() *client.Client {
-	header := http.Header{}
-	// 网关不校验时 SANDBOX_KEY 可留空（本部署的 CF 代理即如此）
-	if key := os.Getenv("SANDBOX_KEY"); key != "" {
-		header.Set("Authorization", "Bearer "+key)
-	}
-	// iSH 的模拟 CPU 上 TLS 握手可能超过 net/http 默认的 10s 上限，放宽并启用 SDK 重试。
-	httpClient := &http.Client{
-		Timeout: httpTimeout,
-		Transport: &http.Transport{
-			TLSHandshakeTimeout:   30 * time.Second,
-			ResponseHeaderTimeout: httpTimeout,
-			IdleConnTimeout:       90 * time.Second,
-			MaxIdleConns:          10,
-			ForceAttemptHTTP2:     true,
-		},
-	}
-	activeClient = httpClient
-	return client.NewClient(
-		option.WithBaseURL(baseURL()),
-		option.WithHTTPHeader(header),
-		option.WithHTTPClient(httpClient),
-		option.WithMaxAttempts(3),
-	)
+type command struct {
+	name  string
+	usage string
+	fn    func(args []string) error
 }
 
-// rawGet 直连 REST 取原始 JSON。
-// 用途：绕开 Go SDK 的严格时间戳解析——REST 返回 "2026-10-01T19:16:06.242026"（无时区），
-// SDK 会报 `parsing time ... as "2006-01-02T15:04:05Z07:00"`，该方法不受影响。
-func rawGet(path string) ([]byte, error) {
-	if activeClient == nil {
-		newClient()
-	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(baseURL(), "/")+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if key := os.Getenv("SANDBOX_KEY"); key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-	resp, err := activeClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s → HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return body, nil
+// 命令表：命令名 → 用法 → 实现函数（实现散布在各 v2_*.go 中）
+var commands = []command{
+	{"version", "version", cmdVersion},
+	{"health", "health", cmdHealth},
+	{"sandbox-info", "sandbox-info", cmdSandboxInfo},
+	{"sandbox-packages", "sandbox-packages --lang=python|node", cmdSandboxPackages},
+
+	{"exec", "exec <命令> [--cwd=] [--env=K=V,K2=V2] [--timeout=] [--shell=] [--user=] [--max-output=] [--session=] | exec --id=<id> [--offset=] [--stderr-offset=]", cmdExec},
+	{"async", "async <命令> [--cwd=] [--env=] [--user=]（mode=async，打印 command_id）", cmdAsync},
+	{"log", "log <command_id> [--follow] [--interval=500ms] [--timeout=]", cmdLog},
+	{"kill", "kill <command_id> [--signal=SIGKILL]", cmdKill},
+	{"stdin", "stdin <command_id> <文本> [--enter]", cmdStdin},
+	{"sess-new", "sess-new <session_id> [--cwd=] [--env=] [--user=]", cmdSessNew},
+	{"sess", "sess <session_id> <命令> [--timeout=] [--max-output=]", cmdSess},
+	{"sess-ls", "sess-ls", cmdSessLs},
+	{"sess-rm", "sess-rm <session_id>", cmdSessRm},
+
+	{"read", "read <path> [--start=] [--end=] [--user=]", cmdRead},
+	{"cat", "cat <path> [--start=] [--end=]", cmdCat},
+	{"write", "write <本地文件|-> <远端路径> [--append] [--user=]", cmdWrite},
+	{"ls", "ls <path> [--recursive] [--hidden] [--depth=] [--user=]", cmdLs},
+	{"stat", "stat <path> [--user=]", cmdStat},
+	{"tree", "tree <path> [--depth=]", cmdTree},
+	{"edit", "edit <path> --old=<旧串> --new=<新串> [--replace-all] | edit <path> --insert=<行号> --text=<内容>", cmdEdit},
+	{"grep", "grep <path> <正则> [--fixed] [--ignore-case] [--include=*.go,*.py] [--max=]", cmdGrep},
+	{"search", "search <path> <glob 如 **/*.py>", cmdSearch},
+	{"mkdir", "mkdir <path> [--parents]", cmdMkdir},
+	{"cp", "cp <源> <目标> [--overwrite]", cmdCp},
+	{"mv", "mv <源> <目标> [--overwrite]", cmdMv},
+	{"rm", "rm <路径> [--recursive]", cmdRm},
+	{"put", "put <本地文件> <远端路径>（multipart 上传后移动到目标）", cmdPut},
+	{"get", "get <远端路径> <本地文件>（二进制安全下载）", cmdGet},
+
+	{"pty-new", "pty-new <会话id> [--cwd=] [--cols=] [--rows=] [--retention=persistent|expiring]", cmdPtyNew},
+	{"pty", "pty <会话id> <命令> [--timeout=] [--async]", cmdPtyExec},
+	{"pty-screen", "pty-screen <会话id>", cmdPtyScreen},
+	{"pty-input", "pty-input <会话id> <文本> [--enter]", cmdPtyInput},
+	{"pty-signal", "pty-signal <会话id> <信号，如 SIGINT>", cmdPtySignal},
+	{"pty-resize", "pty-resize <会话id> --cols= --rows=", cmdPtyResize},
+	{"pty-ls", "pty-ls", cmdPtyLs},
+	{"pty-rm", "pty-rm <会话id>", cmdPtyRm},
+
+	{"watch", "watch <路径> [--recursive] [--debounce=毫秒]", cmdWatch},
+	{"watch-poll", "watch-poll <watcher_id> [--cursor=] [--timeout=] [--limit=]", cmdWatchPoll},
+	{"watch-ls", "watch-ls", cmdWatchLs},
+	{"watch-rm", "watch-rm <watcher_id>", cmdWatchRm},
+
+	{"code", "code <源码> [--lang=python|javascript] [--session=] [--timeout=]", cmdCode},
+	{"code-info", "code-info", cmdCodeInfo},
+	{"code-sess-new", "code-sess-new [--lang=python|javascript]", cmdCodeSessNew},
+	{"code-sess-ls", "code-sess-ls", cmdCodeSessLs},
+	{"code-sess-rm", "code-sess-rm <session_id>", cmdCodeSessRm},
+
+	{"br-info", "br-info", cmdBrInfo},
+	{"br-go", "br-go <url> [--wait=load|domcontentloaded|networkidle] [--timeout=]", cmdBrGo},
+	{"br-shot", "br-shot <输出文件.png> [--full] [--quality=0-100]", cmdBrShot},
+	{"br-eval", "br-eval <表达式> [--await]", cmdBrEval},
+	{"br-snapshot", "br-snapshot [--interactive]", cmdBrSnapshot},
+	{"br-click", "br-click (--selector= | --ref=)", cmdBrClick},
+	{"br-fill", "br-fill (--selector= | --ref=) --value=<内容>", cmdBrFill},
+	{"br-tabs", "br-tabs", cmdBrTabs},
+	{"br-tab-new", "br-tab-new [--url=]", cmdBrTabNew},
+	{"br-tab-use", "br-tab-use <tab_id>", cmdBrTabUse},
+	{"br-tab-close", "br-tab-close <tab_id>", cmdBrTabClose},
+	{"br-cookies", "br-cookies [--url=] [--domain=]", cmdBrCookies},
+	{"br-cookie-set", "br-cookie-set --name= --value= [--url= | --domain=]", cmdBrCookieSet},
+	{"br-network", "br-network [--limit=] [--clear]", cmdBrNetwork},
+	{"br-cdp", "br-cdp <CDP 方法，如 Browser.getVersion> [--params=JSON]", cmdBrCDP},
+
+	{"mcp", "mcp <方法：initialize|tools/list|tools/call|ping> [--params=JSON]", cmdMCP},
+
+	{"cmp-info", "cmp-info（computer-use；需 aio-computer 镜像，aio-daemon 上返回 503）", cmdCmpInfo},
+	{"cmp-shot", "cmp-shot <输出文件.png>", cmdCmpShot},
+	{"cmp-cursor", "cmp-cursor", cmdCmpCursor},
+	{"cmp-clipboard", "cmp-clipboard", cmdCmpClipboard},
+	{"cmp-windows", "cmp-windows", cmdCmpWindows},
+	{"cmp-a11y", "cmp-a11y [--scope=] [--max-depth=] [--max-nodes=] [--role=] [--name=] [--match=] [--states=] [--include-offscreen=] [--timeout-ms=]", cmdCmpA11y},
+	{"cmp-a11y-nodes", "cmp-a11y-nodes [同 cmp-a11y] [--limit=] [--node-id=]", cmdCmpA11yNodes},
+	{"cmp-act", "cmp-act '<JSON 动作>' [--screenshot]（例：'{\"action\":\"click\",\"x\":100,\"y\":200}'）", cmdCmpAct},
+	{"cmp-act-batch", "cmp-act-batch '<JSON 动作数组>' [--screenshot]", cmdCmpActBatch},
+	{"cmp-record", "cmp-record [--action=start|stop] [--fps=] [--crf=] [--max-duration=] [--width=] [--height=] [--save-path=]", cmdCmpRecord},
+
+	{"pty-ws", "pty-ws <会话id> [--protocol=json|binary] [--durable] [--restore] [--replay-bytes=]（WebSocket 附着终端，Ctrl-] 退出）", cmdPtyWS},
+	{"pty-ws-anon", "pty-ws-anon [--protocol=json|binary]（匿名 WebShell，断开即销毁）", cmdPtyWSAnon},
+	{"watch-events", "watch-events <watcher_id> [--max=]（SSE 事件流，Ctrl-C 退出）", cmdWatchEvents},
+
+	{"br-upload", "br-upload (--selector= | --ref=) --paths=<沙箱内文件,...> [--tab-id=]（浏览器文件上传）", cmdBrUpload},
+	{"br-config", "br-config [--resolution=1280x1024] | [--json='{...}']（浏览器配置）", cmdBrConfig},
+
+	{"fs-tree-put", "fs-tree-put <本地 tar 文件|-> <远端目录> [--user=]（PUT /v2/fs/tree 整树上传）", cmdFsTreePut},
 }
 
-func fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] "+format+"\n", args...)
-	os.Exit(1)
-}
-
-func check(err error) {
-	if err != nil {
-		fatal("%v", err)
+func cmdVersion(args []string) error {
+	fmt.Printf("sandbox-sdk-go %s（纯 v2 API）\n", Version)
+	if base := os.Getenv("SANDBOX_BASE"); base != "" {
+		fmt.Printf("SANDBOX_BASE=%s\n", base)
+	} else {
+		fmt.Println("SANDBOX_BASE=(未设置)")
 	}
+	return nil
 }
 
-func arg(args []string, n int, usage string) string {
-	if len(args) <= n {
-		fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
+func usage() {
+	fmt.Fprintf(os.Stderr, "sandbox-sdk-go %s —— aiod v2 API 遥控 CLI\n\n", Version)
+	fmt.Fprintln(os.Stderr, "用法: sandbox-sdk-go <命令> [参数...]")
+	fmt.Fprintln(os.Stderr, "环境: SANDBOX_BASE（必填）SANDBOX_KEY（可选）")
+	fmt.Fprintln(os.Stderr)
+	w := tabwriter.NewWriter(os.Stderr, 0, 2, 2, ' ', 0)
+	names := make([]string, 0, len(commands))
+	byName := map[string]command{}
+	for _, c := range commands {
+		names = append(names, c.name)
+		byName[c.name] = c
 	}
-	return args[n]
-}
-
-func str(p *string) string {
-	if p == nil {
-		return ""
+	sort.Strings(names)
+	for _, n := range names {
+		fmt.Fprintf(w, "  %s\t%s\n", n, byName[n].usage)
 	}
-	return *p
+	_ = w.Flush()
 }
 
-func num(p *int) int {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
-func ptrBool(v bool) *bool       { return &v }
-func ptrStr(v string) *string    { return &v }
-func ptrFloat(v float64) *float64 { return &v }
-func ptrInt(v int) *int          { return &v }
-
-// shellQuote 生成可在 POSIX shell 中安全还原的单引号字面量。
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func isTerminal(status string) bool {
-	switch status {
-	case "completed", "failed", "killed", "timed_out":
-		return true
-	}
-	return false
-}
-
-func statusOf(info *sdk.BashCommandInfo) string {
-	if info == nil {
-		return ""
-	}
-	return string(info.Status)
-}
-
-func printJSON(v any) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		fmt.Println(v)
+func main() {
+	args := os.Args[1:]
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		usage()
+		if len(args) == 0 {
+			os.Exit(2)
+		}
 		return
 	}
-	fmt.Println(string(data))
-}
-
-// ---------- 命令实现 ----------
-
-// exec 同步执行：仅用于 <60s 的命令；>60s 会被网关掐断（空输出 + ~64s）。
-
-// withEnv 在命令前自动加载 envpush 推送的变量文件（若沙箱内存在）。
-// 背景：沙箱里的 bash 是非登录、非交互的，不读 .bashrc/.bash_profile，
-// 所以"自动带上已推送的变量"这件事由工具侧保证。
-// 可用 SANDBOX_NO_ENVPUSH=1 关闭该包装（调试用）。
-func withEnv(cmd string) string {
-	if os.Getenv("SANDBOX_NO_ENVPUSH") != "" {
-		return cmd
-	}
-	return fmt.Sprintf("[ -f %s ] && . %s; %s", envAutoPath, envAutoPath, cmd)
-}
-
-// parseKVEnv 解析 --env=K=V,K2=V2 形式为 SDK 需要的 map[string]*string。
-func parseKVEnv(s string) map[string]*string {
-	if s == "" {
-		return nil
-	}
-	out := map[string]*string{}
-	for _, kv := range strings.Split(s, ",") {
-		if i := strings.Index(kv, "="); i > 0 {
-			v := kv[i+1:]
-			out[kv[:i]] = &v
-		}
-	}
-	return out
-}
-
-// cmdExec 支持 exec [--env=K=V,K2=V2] [--hard-timeout=秒] "<cmd>"。
-// 环境变量只注入这一次调用，不落盘、不出现在其他进程里。
-func cmdExec(c *client.Client, args []string) {
-	rest := args[2:]
-	var envs map[string]*string
-	var hard *float64
-	var parts []string
-	for _, a := range rest {
-		switch {
-		case strings.HasPrefix(a, "--env="):
-			envs = parseKVEnv(strings.TrimPrefix(a, "--env="))
-			continue
-		case strings.HasPrefix(a, "--hard-timeout="):
-			if f, err := strconv.ParseFloat(strings.TrimPrefix(a, "--hard-timeout="), 64); err == nil {
-				hard = &f
-			}
-			continue
-		}
-		parts = append(parts, a)
-	}
-	cmd := strings.Join(parts, " ")
-	if cmd == "" {
-		fatal("用法: sandbox-sdk-go exec [--env=K=V,K2=V2] \"<cmd>\"")
-	}
-	resp, err := c.Bash.Exec(ctx, &sdk.BashExecRequest{
-		Command:     withEnv(cmd),
-		Env:         envs,
-		HardTimeout: hard,
-	})
-	check(err)
-	fmt.Print(str(resp.Data.Stdout))
-	os.Exit(num(resp.Data.ExitCode))
-}
-
-// run 长任务：异步派发 + 按 offset 增量轮询，直到终态。
-func cmdRun(c *client.Client, args []string) {
-	cmd := arg(args, 2, "用法: sandbox-sdk-go run \"<cmd>\" [hard秒]")
-	hard := 3600.0
-	if len(args) > 3 {
-		fmt.Sscanf(args[3], "%f", &hard)
-	}
-	resp, err := c.Bash.Exec(ctx, &sdk.BashExecRequest{
-		Command: withEnv(cmd), AsyncMode: ptrBool(true), HardTimeout: ptrFloat(hard),
-	})
-	check(err)
-	session := resp.Data.SessionId
-	fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] session=%s\n", session)
-
-	offset := 0
-	for {
-		out, err := c.Bash.Output(ctx, &sdk.BashOutputRequest{
-			SessionId: session, Offset: ptrInt(offset), Wait: ptrBool(true),
-			WaitTimeout: ptrFloat(25),
-		})
-		check(err)
-		fmt.Print(str(out.Data.Stdout))
-		if out.Data.Offset != nil {
-			offset = *out.Data.Offset
-		}
-		status := statusOf(out.Data.Command)
-		if status == "" {
-			time.Sleep(2 * time.Second) // 状态暂缺，避免空转
-			continue
-		}
-		if isTerminal(status) {
-			exit := 0
-			if out.Data.Command != nil {
-				exit = num(out.Data.Command.ExitCode)
-			}
-			fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] status=%s exit=%d\n", status, exit)
-			if status != "completed" {
+	name := args[0]
+	for _, c := range commands {
+		if c.name == name {
+			if err := c.fn(args[1:]); err != nil {
+				fmt.Fprintln(os.Stderr, "错误: "+err.Error())
 				os.Exit(1)
 			}
 			return
 		}
 	}
+	fmt.Fprintf(os.Stderr, "未知命令: %s（用 help 查看全部）\n", name)
+	os.Exit(2)
 }
 
-// sess 在持久会话中执行：工作目录与环境变量跨调用保持。
-func cmdSess(c *client.Client, args []string) {
-	id := arg(args, 2, "用法: sandbox-sdk-go sess <id> \"<cmd>\"")
-	cmd := arg(args, 3, "用法: sandbox-sdk-go sess <id> \"<cmd>\"")
-	resp, err := c.Shell.ExecCommand(ctx, &sdk.ShellExecRequest{Id: ptrStr(id), Command: withEnv(cmd)})
-	check(err)
-	fmt.Print(str(resp.Data.Output))
-	os.Exit(num(resp.Data.ExitCode))
-}
+// ---------------------------------------------------------------- 输出工具
 
-// sessnew 显式创建持久会话（已存在则复用）。
-func cmdSessNew(c *client.Client, args []string) {
-	id := arg(args, 2, "用法: sandbox-sdk-go sessnew <id> [dir]")
-	dir := defaultDir
-	if len(args) > 3 {
-		dir = args[3]
-	}
-	if !ensureSession(c, id, dir) {
-		fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] 会话 %s 已存在，复用\n", id)
+// printJSON 以缩进 JSON 打印任意值。
+func printJSON(v any) {
+	if v == nil {
+		fmt.Println("null")
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] 会话 %s 就绪\n", id)
-}
-
-func ensureSession(c *client.Client, id, dir string) bool {
-	_, err := c.Shell.CreateSession(ctx, &sdk.ShellCreateSessionRequest{
-		Id: ptrStr(id), ExecDir: ptrStr(dir),
-	})
-	return err == nil
-}
-
-func cmdSessions(c *client.Client, args []string) {
-	body, err := rawGet("/v1/shell/sessions")
-	check(err)
-	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, body, "", "  "); err != nil {
-		fmt.Println(string(body))
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Println(asString(v))
 		return
 	}
-	fmt.Println(pretty.String())
+	fmt.Println(string(b))
 }
 
-func cmdView(c *client.Client, args []string) {
-	id := arg(args, 2, "用法: sandbox-sdk-go view <id>")
-	resp, err := c.Shell.View(ctx, &sdk.ShellViewRequest{Id: id})
-	check(err)
-	for _, record := range resp.Data.Console {
-		fmt.Printf("%s%s\n%s\n", record.Ps1, record.Command, str(record.Output))
-	}
-	if len(resp.Data.Console) == 0 {
-		fmt.Print(resp.Data.Output)
-	}
-}
-
-func cmdKill(c *client.Client, args []string) {
-	id := arg(args, 2, "用法: sandbox-sdk-go kill <id>")
-	_, err := c.Shell.CleanupSession(ctx, id)
-	check(err)
-	fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] 会话 %s 已清理\n", id)
-}
-
-// job 保活后台任务：投进持久会话并 nohup，日志落盘，命令立即返回。
-func cmdJob(c *client.Client, args []string) {
-	id := arg(args, 2, "用法: sandbox-sdk-go job <id> \"<cmd>\"")
-	cmd := arg(args, 3, "用法: sandbox-sdk-go job <id> \"<cmd>\"")
-	if !ensureSession(c, id, defaultDir) {
-		// 会话已存在，直接复用
-	}
-	log := fmt.Sprintf("%s/%s.log", jobDir, id)
-	launch := fmt.Sprintf("mkdir -p %s && nohup bash -c %s >%s 2>&1 & echo \"pid=$! log=%s\"",
-		jobDir, shellQuote(withEnv(cmd)), log, log)
-	resp, err := c.Shell.ExecCommand(ctx, &sdk.ShellExecRequest{Id: ptrStr(id), Command: launch})
-	check(err)
-	fmt.Print(str(resp.Data.Output))
-	fmt.Printf("[sandbox-sdk-go] 会话=%s 日志=%s\n", id, log)
-}
-
-func cmdLog(c *client.Client, args []string) {
-	id := arg(args, 2, "用法: sandbox-sdk-go log <id> [行数]")
-	lines := "40"
-	if len(args) > 3 {
-		lines = args[3]
-	}
-	execAndPrint(c, fmt.Sprintf("tail -n %s %s/%s.log 2>&1", lines, jobDir, id))
-}
-
-func cmdRead(c *client.Client, args []string) {
-	remote := arg(args, 2, "用法: sandbox-sdk-go read <远端路径>")
-	resp, err := c.File.ReadFile(ctx, &sdk.FileReadRequest{File: remote})
-	check(err)
-	fmt.Print(resp.Data.Content)
-}
-
-// write 写文本/二进制：UTF-8 走明文，其余自动 base64。
-func cmdWrite(c *client.Client, args []string) {
-	remote := arg(args, 2, "用法: sandbox-sdk-go write <远端路径> <本地文件>")
-	local := arg(args, 3, "用法: sandbox-sdk-go write <远端路径> <本地文件>")
-	content, err := os.ReadFile(local)
-	check(err)
-	request := &sdk.FileWriteRequest{File: remote}
-	if utf8.Valid(content) {
-		request.Content = string(content)
-	} else {
-		encoding := sdk.FileContentEncodingBase64
-		request.Content = base64.StdEncoding.EncodeToString(content)
-		request.Encoding = &encoding
-	}
-	resp, err := c.File.WriteFile(ctx, request)
-	check(err)
-	fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] %s ← %s (%d 字节)\n", remote, local, num(resp.Data.BytesWritten))
-}
-
-func cmdGet(c *client.Client, args []string) {
-	remote := arg(args, 2, "用法: sandbox-sdk-go get <远端路径> <本地文件>")
-	local := arg(args, 3, "用法: sandbox-sdk-go get <远端路径> <本地文件>")
-	reader, err := c.File.DownloadFile(ctx, &sdk.FileDownloadFileRequest{Path: remote})
-	check(err)
-	data, err := io.ReadAll(reader)
-	check(err)
-	check(os.WriteFile(local, data, 0o644))
-	fmt.Fprintf(os.Stderr, "[sandbox-sdk-go] %s → %s (%d 字节)\n", remote, local, len(data))
-}
-
-func cmdPS(c *client.Client, args []string) {
-	execAndPrint(c, "ps -eo pid,etime,pcpu,rss,cmd --sort=-pcpu | head -20")
-}
-
-func baseURL() string {
-	base := strings.TrimSuffix(os.Getenv("SANDBOX_BASE"), "/")
-	if base == "" {
-		fatal("SANDBOX_BASE 未设置（形如 https://<cubesandbox-proxy-host>/sandbox/<SID>/8080）")
-	}
-	return base
-}
-
-func cmdVersion(c *client.Client, args []string) {
-	key := "未设置"
-	if os.Getenv("SANDBOX_KEY") != "" {
-		key = "已设置"
-	}
-	base := strings.TrimSuffix(os.Getenv("SANDBOX_BASE"), "/")
-	if base == "" {
-		base = "未设置（形如 https://<cubesandbox-proxy-host>/sandbox/<SID>/8080）"
-	}
-	fmt.Printf("sandbox-sdk-go %s (%s/%s, static)\nSANDBOX_BASE=%s\nSANDBOX_KEY=%s\n",
-		version, runtime.GOOS, runtime.GOARCH, base, key)
-}
-
-func cmdHealth(c *client.Client, args []string) {
-	execAndPrint(c, "hostname; date -Is; uptime; free -h | head -2; df -h / | tail -1")
-}
-
-func execAndPrint(c *client.Client, command string) {
-	resp, err := c.Bash.Exec(ctx, &sdk.BashExecRequest{Command: command})
-	check(err)
-	fmt.Print(str(resp.Data.Stdout))
-	os.Exit(num(resp.Data.ExitCode))
-}
-
-func usage() {
-	usageWith(2)
-}
-
-func usageWith(code int) {
-	fmt.Fprint(os.Stderr, `sandbox-sdk-go — CubeSandbox 沙箱客户端（Go SDK，静态二进制）
-覆盖 agent-infra/sandbox 的全部 20 个命名空间 / 132 个方法
-
-【基础命令】
-  sandbox-sdk-go exec  [--env=K=V,K2=V2] "<cmd>"  同步执行（<60s）
-      注意：--env 走 SDK 的 env 字段，实测本部署的 AIO 不消费它；
-            传密钥请用"文件 + source"或"持久会话 export"（见技能文档）
-  sandbox-sdk-go run   "<cmd>" [hard秒]        长任务：async 派发 + 增量轮询
-  sandbox-sdk-go sess  <id> "<cmd>"           持久会话执行（cwd/env 跨调用保持）
-  sandbox-sdk-go sessnew <id> [dir]           建持久会话
-  sandbox-sdk-go sessions                     列出会话
-  sandbox-sdk-go view  <id>                   查看会话控制台
-  sandbox-sdk-go kill  <id>                   清理会话
-  sandbox-sdk-go job   <id> "<cmd>"           保活后台任务（nohup + 日志）
-  sandbox-sdk-go log   <id> [行数]            读任务日志
-  sandbox-sdk-go read  <远端路径>              读远端文件到 stdout
-  sandbox-sdk-go write <远端路径> <本地文件>    本地 → 远端
-  sandbox-sdk-go get   <远端路径> <本地文件>    远端 → 本地
-  sandbox-sdk-go envpush NAME[=值] ...         把本地环境变量推到沙箱（之后 exec/run/job 自动带上）
-  sandbox-sdk-go ps / health / version        进程 / 体检 / 版本
-
-【命名空间命令】sandbox-sdk-go <命名空间> <动作> [参数...]（不带动作时打印该空间用法）
-  file     list read write replace search find grep glob upload download str-replace watch-list watch-create watch-events watch-poll watch-wait watch-stop
-  code     run info
-  jupyter  run info ls new rm rm-all
-  nodejs   run info ls new get rm update
-  util     markdown
-  browser  info config restart screenshot action pac
-  page     navigate back forward reload click fill type press hotkey hover select check uncheck upload fill-form scroll scroll-to scroll-to-element screenshot get-html get-text get-markdown elements console export-console evaluate find-text wait record
-  tabs     ls new close activate
-  cookies  ls set clear
-  state    save load
-  net      headers scoped-headers route-add route-rm requests har
-  captcha  detect wait
-  mcp      servers tools call
-  skills   ls content register rm clear
-  hooks    ls add rm
-  proxy    ls add rm excludes exclude-add exclude-rm upstream upstream-set upstream-rm health diagnose
-  display  record
-  auth     ticket verify
-  ctxinfo  context py-packages node-packages hooks
-`)
-	os.Exit(code)
-}
-
-func main() {
-	if len(os.Args) < 2 {
-		usage()
-	}
-	// 不依赖凭据的命令先行处理：未配置 SANDBOX_KEY 的环境也能查看版本与帮助。
-	switch os.Args[1] {
-	case "help", "-h", "--help":
-		usageWith(0)
-	case "version", "-v", "--version":
-		cmdVersion(nil, os.Args)
-		os.Exit(0)
-	}
-	c := newClient()
-	// 命名空间式命令：sandbox-sdk-go <命名空间> <动作> [参数...]（见 dispatch.go）
-	if fn, ok := namespaces[os.Args[1]]; ok {
-		fn(c, os.Args[2:])
+// printData 默认输出：字符串原样打印，其它走 JSON。
+func printData(v any) {
+	if s, ok := v.(string); ok {
+		fmt.Println(strings.TrimRight(s, "\n"))
 		return
 	}
-	switch os.Args[1] {
-	case "envpush":
-		cmdEnvPush(c, os.Args)
-	case "exec":
-		cmdExec(c, os.Args)
-	case "run":
-		cmdRun(c, os.Args)
-	case "sess":
-		cmdSess(c, os.Args)
-	case "sessnew":
-		cmdSessNew(c, os.Args)
-	case "sessions":
-		cmdSessions(c, os.Args)
-	case "view":
-		cmdView(c, os.Args)
-	case "kill":
-		cmdKill(c, os.Args)
-	case "job":
-		cmdJob(c, os.Args)
-	case "log":
-		cmdLog(c, os.Args)
-	case "read":
-		cmdRead(c, os.Args)
-	case "write":
-		cmdWrite(c, os.Args)
-	case "get":
-		cmdGet(c, os.Args)
-	case "ps":
-		cmdPS(c, os.Args)
-	case "health":
-		cmdHealth(c, os.Args)
-	default:
-		usage()
+	printJSON(v)
+}
+
+// mustClient 统一处理客户端构造失败。
+func mustClient() (*Client, error) {
+	return NewClient()
+}
+
+// needArgs 校验必填位置参数数量。
+func needArgs(pos []string, n int, usage string) error {
+	if len(pos) < n {
+		return fmt.Errorf("参数不足，用法: %s", usage)
 	}
+	return nil
+}
+
+// envMap 解析 --env=K=V,K2=V2 形式。
+func envMap(s string) map[string]any {
+	out := map[string]any{}
+	for _, kv := range strings.Split(s, ",") {
+		kv = strings.TrimSpace(kv)
+		if kv == "" {
+			continue
+		}
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		out[kv[:i]] = kv[i+1:]
+	}
+	return out
 }

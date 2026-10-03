@@ -1,0 +1,190 @@
+# sandbox-sdk-go.yml —— sandbox-sdk-go v5（纯 v2）构建 / 检查 / 发布工作流
+#
+# 建议落位：仓库 .github/workflows/sandbox-sdk-go.yml（本文件即草稿；见 PLACEMENT.md）
+#
+# 触发：
+#   - push 到 main：仅当本工具目录或本工作流变更（删掉 paths 段即变为全量触发）
+#   - 手动触发（workflow_dispatch）：可指定版本号；可勾选跑集成测试（需 secret CUBE_API_KEY）
+#
+# 发布（滚动 Release "latest"，gosdk-update 消费）：
+#   sandbox-sdk-go-linux-arm64 / sandbox-sdk-go-linux-amd64 / SHA256SUMS
+#   —— SHA256SUMS 采用“合并保留”策略：不动发布页上其他工具（如 cubesandbox-sdk-go）的条目
+#
+# 落位说明：假定工具源码在仓库根目录 $TOOLDIR 下（默认 agent-infra-sandbox/，即
+# sandbox-tools 里产出 sandbox-sdk-go 资产的既有源码目录）。如调整目录名，
+# 需同步修改两处：① 本文件 env.TOOLDIR ② on.push.paths 里的路径。
+name: sandbox-sdk-go v5
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent-infra-sandbox/**"
+      - ".github/workflows/sandbox-sdk-go.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "注入的版本号（-X main.Version，如 v5.1.0；留空用 DEFAULT_VERSION）"
+        type: string
+        default: ""
+      integration:
+        description: "跑集成测试（自建 CubeSandbox 沙箱；需仓库 secret CUBE_API_KEY）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# 同一时刻只允许一条发布流写 latest，避免 SHA256SUMS 交叉覆盖
+concurrency:
+  group: sandbox-sdk-go-latest
+  cancel-in-progress: false
+
+env:
+  TOOLDIR: agent-infra-sandbox   # 工具源码目录（go.mod 所在处）
+  DEFAULT_VERSION: v5.0.0        # 默认版本号（workflow_dispatch 的 version 输入优先）
+
+jobs:
+  # ---------- 1) 格式 / 静态检查 / 单元测试 ----------
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: gofmt 检查
+        working-directory: ${{ env.TOOLDIR }}
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::以下文件未通过 gofmt，请本地执行 gofmt -w . 后提交"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt OK"
+      - name: go vet + go mod tidy
+        working-directory: ${{ env.TOOLDIR }}
+        run: |
+          go mod tidy
+          go vet ./...
+          echo "vet OK"
+      - name: go test（无测试文件时自然通过）
+        working-directory: ${{ env.TOOLDIR }}
+        run: go test ./...
+
+  # ---------- 2) 双架构交叉编译（linux/arm64、linux/amd64）----------
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [arm64, amd64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: 计算版本号
+        env:
+          VER_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          V="${VER_INPUT:-$DEFAULT_VERSION}"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "本次构建版本：$V"
+      - name: 构建（bash build.sh）
+        working-directory: ${{ env.TOOLDIR }}
+        env:
+          GOARCHS: ${{ matrix.goarch }}
+        run: |
+          bash build.sh
+          ls -l dist/
+      - name: 产物检查（类型 / 架构）
+        working-directory: ${{ env.TOOLDIR }}
+        run: file dist/sandbox-sdk-go-linux-${{ matrix.goarch }}
+      - name: 冒烟自检（amd64 产物可在 runner 直接执行）
+        if: matrix.goarch == 'amd64'
+        working-directory: ${{ env.TOOLDIR }}
+        run: |
+          set -e
+          out=$(./dist/sandbox-sdk-go-linux-amd64 version | head -1)
+          echo "$out"
+          case "$out" in
+            *"$VERSION"*) echo "版本注入 OK（$VERSION）" ;;
+            *) echo "::error::版本注入不符：输出里未出现 $VERSION"; exit 1 ;;
+          esac
+          ./dist/sandbox-sdk-go-linux-amd64 help >/dev/null 2>&1 && echo "help OK"
+          # 无 SANDBOX_BASE 时 sandbox-info 应报错并退出非 0（顺带验证参数分发）
+          ./dist/sandbox-sdk-go-linux-amd64 sandbox-info >/dev/null 2>&1 \
+            && { echo "::error::缺 SANDBOX_BASE 时不应成功"; exit 1; } \
+            || echo "缺省报错 OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-sdk-go-linux-${{ matrix.goarch }}
+          path: ${{ env.TOOLDIR }}/dist/sandbox-sdk-go-linux-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  # ---------- 3) 汇总校验和 + 发布滚动 Release "latest" ----------
+  # 说明：与既有 build-tools 工作流共享同一个 latest Release（标题/正文会被双方先后覆盖，
+  # 属过渡期预期行为；收敛为单一发布方、或给 build.yml 的 checksums 步骤也加同样的合并逻辑即可）。
+  release:
+    needs: [checks, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 生成 SHA256SUMS（保留发布页已有其他工具条目）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cd dist
+          sha256sum sandbox-sdk-go-linux-* > /tmp/new.SHA256SUMS
+          if gh release download latest --pattern SHA256SUMS --dir /tmp/prev --clobber 2>/dev/null; then
+            # 去掉旧清单里本工具的旧条目；其他工具（如 cubesandbox-sdk-go）的条目原样保留
+            grep -vE 'sandbox-sdk-go-linux-(arm64|amd64)' /tmp/prev/SHA256SUMS > SHA256SUMS || true
+          else
+            : > SHA256SUMS
+            echo "（发布页暂无 SHA256SUMS，首建）"
+          fi
+          cat /tmp/new.SHA256SUMS >> SHA256SUMS
+          echo "== 上传前的 SHA256SUMS =="
+          cat SHA256SUMS
+          grep 'sandbox-sdk-go' SHA256SUMS | sha256sum -c -
+      - name: 发布到 latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "toolchain latest"
+          body: |
+            sandbox-sdk-go v5（纯 v2）滚动构建
+            version: ${{ github.event.inputs.version || 'v5.0.0' }}
+            commit:  ${{ github.sha }} / run: ${{ github.run_id }}
+          files: dist/*
+          make_latest: true
+
+  # ---------- 4) （可选）集成测试：手动触发且勾选 integration=true 才运行 ----------
+  # 需要仓库 Secrets 配置 CUBE_API_KEY（CubeSandbox 平台密钥）；
+  # 依赖 <TOOLDIR>/tests/run.sh（自建沙箱 → 沙箱内编译 CLI → cli_it.py → 自动销毁沙箱）。
+  integration:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.integration == 'true'
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: 取 cubesandbox-sdk-go（平台遥控工具，发布页 latest）
+        run: |
+          curl -fsSL -o /tmp/cubesandbox-sdk-go \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/cubesandbox-sdk-go-linux-amd64"
+          chmod +x /tmp/cubesandbox-sdk-go
+          /tmp/cubesandbox-sdk-go version || true
+      - name: 集成测试（tests/run.sh）
+        env:
+          CUBE_API_KEY: ${{ secrets.CUBE_API_KEY }}
+          CUBESANDBOX_CMD: /tmp/cubesandbox-sdk-go
+        run: sh "$TOOLDIR/tests/run.sh"
