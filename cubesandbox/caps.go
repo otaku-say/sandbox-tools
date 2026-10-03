@@ -8,7 +8,7 @@ package main
 //
 // 能力来源（优先级从高到低）：
 //   1) 本地缓存 ~/.cubesandbox-sdk-go/caps.json（tpl-caps --probe 真机探测后写入；也可手工维护）
-//   2) 镜像名启发式（保守推断；aio-computer→含 desktop，aio-daemon/aiod/sandbox→含 browser）
+//   2) 镜像名启发式（仅 AIO 系：aio-computer→含 desktop；aio-*/aiod/all-in-one→含 browser；其余只给基线）
 // 选择规则：在 READY 且**能力覆盖需求**的模板中，取**内存最小 → CPU 最小 → 创建最新**者。
 
 import (
@@ -68,14 +68,15 @@ func saveCapsCache(m map[string]capEntry) {
 	}
 }
 
-// heuristicCaps 依据镜像名推断能力（保守；精确结果请用 tpl-caps --probe 落缓存）。
+// heuristicCaps 依据镜像名推断能力（**保守**：只对 AIO 系镜像推断 browser/desktop，
+// 其余镜像一律只给基线 shell/file/code；精确结果请用 tpl-caps --probe 落缓存）。
 func heuristicCaps(imageInfo string) []string {
 	img := strings.ToLower(imageInfo)
 	caps := []string{capShell, capFile, capCode}
 	switch {
-	case strings.Contains(img, "aio-computer") || strings.Contains(img, "computer"):
+	case strings.Contains(img, "aio-computer"):
 		caps = append(caps, capBrowser, capDesktop) // 桌面镜像同时带 Chromium
-	case strings.Contains(img, "aio-daemon") || strings.Contains(img, "aiod") || strings.Contains(img, "sandbox"):
+	case strings.Contains(img, "aio-") || strings.Contains(img, "aiod") || strings.Contains(img, "all-in-one"):
 		caps = append(caps, capBrowser)
 	}
 	return caps
@@ -210,7 +211,22 @@ func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 	}()
 	co := cubesandbox.CommandOptions{Timeout: 60 * time.Second}
 
-	// 先等网关（镜像内 8080）
+	// 先分清镜像类型：AIO 系镜像有 /opt/gem/run.sh（有网关/browser/desktop 面）；
+	// 其余镜像（如官方 sandbox-code：envd + Jupyter）只做基线判定，不必干等网关。
+	isAIO := false
+	if res, err := sb.Commands().Run(ctx, "test -f /opt/gem/run.sh && echo yes", co); err == nil && strings.Contains(res.Stdout, "yes") {
+		isAIO = true
+	}
+	if !isAIO {
+		res, err := sb.Commands().Run(ctx, `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:49983/health`, co)
+		if err != nil || strings.TrimSpace(res.Stdout) != "204" {
+			return nil, fmt.Errorf("沙箱 %s 既无 AIO 网关也无 envd，无法判定能力", sb.SandboxID)
+		}
+		fmt.Fprintf(os.Stderr, "[caps] %s 非 AIO 镜像（无 /opt/gem/run.sh）：记基线 shell,file,code\n", t.TemplateID)
+		return []string{capShell, capFile, capCode}, nil
+	}
+
+	// AIO 镜像：等网关（镜像内 8080）
 	gateway := false
 	for i := 0; i < 90; i++ {
 		res, err := sb.Commands().Run(ctx, `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/v1/capabilities`, co)
@@ -221,7 +237,7 @@ func probeCaps(c *cubesandbox.Client, t tplView) ([]string, error) {
 		time.Sleep(2 * time.Second)
 	}
 	if !gateway {
-		return nil, fmt.Errorf("沙箱 %s 网关 180s 内未就绪", sb.SandboxID)
+		return nil, fmt.Errorf("沙箱 %s 为 AIO 镜像但网关 180s 内未就绪", sb.SandboxID)
 	}
 
 	// 打一次端点：返回 (http 码, 响应正文)
